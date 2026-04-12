@@ -7,6 +7,7 @@ from langchain_core.tools import tool
 from loguru import logger
 
 from app.config import config
+from app.services.rerank_service import rerank_documents
 from app.services.vector_store_manager import vector_store_manager
 
 
@@ -25,22 +26,27 @@ def retrieve_knowledge(query: str) -> Tuple[str, List[Document]]:
     try:
         logger.info(f"知识检索工具被调用: query='{query}'")
         
-        # 从向量存储中检索相关文档
         vector_store = vector_store_manager.get_vector_store()
-        retriever = vector_store.as_retriever(
-            search_kwargs={"k": config.rag_top_k}
-        )
-        
+        fetch_k = config.rag_fetch_k if config.rag_rerank_enabled else config.rag_top_k
+        retriever = vector_store.as_retriever(search_kwargs={"k": fetch_k})
         docs = retriever.invoke(query)
-        
+
         if not docs:
             logger.warning("未检索到相关文档")
             return "没有找到相关信息。", []
-        
+
+        if config.rag_rerank_enabled:
+            docs = rerank_documents(query, docs, config.rag_top_k)
+        else:
+            docs = docs[: config.rag_top_k]
+
         # 格式化文档为上下文
         context = format_docs(docs)
-        
-        logger.info(f"检索到 {len(docs)} 个相关文档")
+
+        logger.info(
+            f"检索完成: rerank={'on' if config.rag_rerank_enabled else 'off'}, "
+            f"fetch_k={fetch_k}, 最终 {len(docs)} 条"
+        )
         return context, docs
         
     except Exception as e:

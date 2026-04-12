@@ -5,6 +5,8 @@
 
 from pathlib import Path
 from typing import Dict, Any
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 仓库根目录下的 .env（不依赖进程当前工作目录，避免 nohup / systemd 等 cwd 不对时读不到配置）
@@ -41,7 +43,20 @@ class Settings(BaseSettings):
 
     # RAG 配置
     rag_top_k: int = 3
+    """向量检索后最终交给模型的 chunk 条数。"""
+    rag_fetch_k: int = 20
+    """宽召回条数（应 ≥ rag_top_k）；仅在启用 FlashRank 时作为 Milvus 检索 k。"""
+    rag_rerank_enabled: bool = True
+    """是否用 FlashRank 对宽召回结果重排后截断为 rag_top_k。"""
+    rag_flashrank_max_length: int = 512
+    """FlashRank cross-encoder 输入长度上限（token 级预算，需覆盖 query+单段 passage）。"""
     rag_model: str = "qwen-max"  # 使用快速响应模型，不带扩展思考
+
+    @model_validator(mode="after")
+    def _normalize_rag_fetch_k(self) -> "Settings":
+        if self.rag_fetch_k < self.rag_top_k:
+            self.rag_fetch_k = self.rag_top_k
+        return self
 
     # 文档分块配置
     chunk_max_size: int = 800
