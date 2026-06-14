@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     """FlashRank cross-encoder 输入长度上限（token 级预算，需覆盖 query+单段 passage）。"""
     rag_model: str = "qwen-max"  # 使用快速响应模型，不带扩展思考
 
+    # Tavily 联网搜索（可选；未配置 API Key 时不注册该工具）
+    tavily_api_key: str = ""
+    tavily_max_results: int = 5
+    tavily_timeout_seconds: float = 25.0
+
     @model_validator(mode="after")
     def _normalize_rag_fetch_k(self) -> "Settings":
         if self.rag_fetch_k < self.rag_top_k:

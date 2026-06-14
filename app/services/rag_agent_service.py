@@ -20,7 +20,7 @@ from typing_extensions import TypedDict
 from langchain_qwq import ChatQwen
 
 from app.config import config
-from app.tools import get_current_time, retrieve_knowledge
+from app.tools import get_current_time, retrieve_knowledge, with_optional_tavily
 from app.agent.mcp_client import get_mcp_client_with_retry
 
 # 阿里千问大模型和langchain集成参考： https://docs.langchain.com/oss/python/integrations/chat/qwen
@@ -94,8 +94,8 @@ class RagAgentService:
             streaming=streaming,
         )
 
-        # 定义基础工具
-        self.tools = [retrieve_knowledge, get_current_time]
+        # 定义基础工具（知识库优先；配置 TAVILY_API_KEY 时追加公网检索）
+        self.tools = with_optional_tavily([retrieve_knowledge, get_current_time])
 
         # MCP 客户端（延迟初始化，使用全局管理）
         self.mcp_tools: list = []
@@ -157,9 +157,11 @@ class RagAgentService:
 
             工作原则:
             1. 理解用户需求，选择合适的工具来完成任务
-            2. 当需要获取实时信息或专业知识时，主动使用相关工具
-            3. 基于工具返回的结果提供准确、专业的回答
-            4. 如果工具无法提供足够信息，请诚实地告知用户
+            2. **优先使用知识库检索工具**获取内部文档与既定知识；仅当检索结果为空、
+               明显不相关或仍不足以回答问题时，再使用联网搜索（Tavily）获取外部时效信息。
+            3. 当需要当前时间时，使用时间工具；基于工具返回的结果提供准确、专业的回答
+            4. 若同时使用知识库与公网结果，请在回答中区分信息来源；不得编造工具未返回的内容
+            5. 如果工具无法提供足够信息，请诚实地告知用户
 
             回答要求:
             - 保持友好、专业的语气

@@ -31,7 +31,7 @@ repos:
     rev: 23.12.1
     hooks:
       - id: black
-        language_version: python3.10
+        language_version: python3.11
         args: ["--line-length", "100"]
 
   # Python 代码检查 - Ruff (更快的 flake8 替代品)
@@ -76,7 +76,7 @@ repos:
 
 # 配置
 default_language_version:
-  python: python3.10
+  python: python3.11
 
 # 排除的文件和目录
 exclude: |

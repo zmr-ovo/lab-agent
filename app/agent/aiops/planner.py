@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from loguru import logger
 
 from app.config import config
-from app.tools import get_current_time, retrieve_knowledge
+from app.tools import get_current_time, retrieve_knowledge, with_optional_tavily
 from app.agent.mcp_client import get_mcp_client_with_retry
 from .state import PlanExecuteState
 from .utils import format_tools_description
@@ -46,6 +46,8 @@ planner_prompt = ChatPromptTemplate.from_messages(
                 - 步骤之间应该有清晰的依赖关系
                 - 步骤描述要具体、可操作
                 - **如果有相关经验文档，请参考其中的方法和步骤制定计划**
+                - **优先安排知识库检索**获取内部经验；仅当内部知识明显不足且需要外部时效资讯时，
+                  再在计划中安排联网搜索（Tavily）；运维诊断仍以监控/日志等 MCP 工具为主。
 
                 示例输入："分析当前系统的性能问题"
                 示例输出（假设有对应工具）：
@@ -91,10 +93,12 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
 
         # 步骤2: 获取可用工具列表
         # 获取本地工具
-        local_tools = [
-            get_current_time,
-            retrieve_knowledge
-        ]
+        local_tools = with_optional_tavily(
+            [
+                get_current_time,
+                retrieve_knowledge,
+            ]
+        )
 
         # 获取 MCP 工具
         mcp_client = await get_mcp_client_with_retry()

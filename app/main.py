@@ -85,6 +85,12 @@ async def root():
     }
 
 
+@app.get("/project-flow", include_in_schema=False)
+async def project_flow():
+    """返回项目流程框架可视化页面。"""
+    return FileResponse(os.path.join(STATIC_DIR, "project-flow.html"))
+
+
 if __name__ == "__main__":
     import uvicorn
     

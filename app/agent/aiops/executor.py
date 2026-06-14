@@ -10,7 +10,7 @@ from langgraph.prebuilt import ToolNode
 from loguru import logger
 
 from app.config import config
-from app.tools import get_current_time, retrieve_knowledge
+from app.tools import get_current_time, retrieve_knowledge, with_optional_tavily
 from app.agent.mcp_client import get_mcp_client_with_retry
 from .state import PlanExecuteState
 
@@ -36,10 +36,12 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
 
     try:
         # 获取本地工具
-        local_tools = [
-            get_current_time,
-            retrieve_knowledge
-        ]
+        local_tools = with_optional_tavily(
+            [
+                get_current_time,
+                retrieve_knowledge,
+            ]
+        )
 
         # 获取 MCP 工具
         mcp_client = await get_mcp_client_with_retry()
@@ -73,6 +75,7 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
 注意：
 - 如果工具调用失败，请说明失败原因
 - 不要编造数据，只返回实际获取的信息
+- **优先使用知识库检索**；仅当知识库不足以完成本步骤时再使用联网搜索（Tavily）
 - 执行结果要清晰、准确
 - 专注于当前步骤，不要考虑其他任务"""),
             HumanMessage(content=f"请执行以下任务: {task}")

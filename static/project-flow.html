@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="SuperBizAgent 项目流程框架图与面试复习页面">
+    <title>SuperBizAgent 项目流程框架图</title>
+    <style>
+        :root {
+            --ink: #162033;
+            --muted: #667085;
+            --line: #d8dfeb;
+            --paper: #f5f7fb;
+            --card: #ffffff;
+            --blue: #246bfd;
+            --blue-soft: #eaf1ff;
+            --green: #159455;
+            --green-soft: #e8f7ef;
+            --orange: #e86f1c;
+            --orange-soft: #fff0e5;
+            --purple: #7047eb;
+            --purple-soft: #f0ebff;
+            --shadow: 0 18px 50px rgba(27, 39, 71, 0.10);
+            --radius: 20px;
+        }
+
+        * { box-sizing: border-box; }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            margin: 0;
+            color: var(--ink);
+            font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+            background:
+                radial-gradient(circle at 8% 0%, rgba(36, 107, 253, .10), transparent 26rem),
+                radial-gradient(circle at 100% 24%, rgba(232, 111, 28, .09), transparent 30rem),
+                var(--paper);
+            min-height: 100vh;
+        }
+
+        button { font: inherit; }
+
+        .shell {
+            width: min(1560px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 28px 0 56px;
+        }
+
+        .hero {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 24px;
+            margin-bottom: 20px;
+        }
+
+        .eyebrow {
+            margin: 0 0 8px;
+            color: var(--blue);
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(30px, 4vw, 54px);
+            letter-spacing: -.04em;
+            line-height: 1.08;
+        }
+
+        .subtitle {
+            margin: 12px 0 0;
+            color: var(--muted);
+            font-size: 16px;
+        }
+
+        .hero-tags {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .tag {
+            padding: 8px 12px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, .78);
+            color: #475467;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .toolbar {
+            position: sticky;
+            top: 12px;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 10px;
+            margin-bottom: 18px;
+            border: 1px solid rgba(216, 223, 235, .9);
+            border-radius: 16px;
+            background: rgba(255, 255, 255, .88);
+            box-shadow: 0 10px 30px rgba(27, 39, 71, .08);
+            backdrop-filter: blur(14px);
+        }
+
+        .tabs, .tools {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .toolbar button {
+            border: 0;
+            border-radius: 10px;
+            padding: 9px 13px;
+            background: transparent;
+            color: #475467;
+            cursor: pointer;
+            font-weight: 750;
+            transition: .18s ease;
+        }
+
+        .toolbar button:hover { background: #f1f4f9; color: var(--ink); }
+        .toolbar button.active { background: var(--ink); color: white; }
+        .tools button { min-width: 40px; padding-inline: 10px; }
+
+        .zoom-label {
+            min-width: 52px;
+            color: var(--muted);
+            text-align: center;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .canvas-window {
+            overflow: auto;
+            min-height: 680px;
+            border: 1px solid var(--line);
+            border-radius: 24px;
+            background-color: rgba(255,255,255,.72);
+            background-image:
+                linear-gradient(rgba(36,107,253,.035) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(36,107,253,.035) 1px, transparent 1px);
+            background-size: 24px 24px;
+            box-shadow: var(--shadow);
+        }
+
+        .canvas {
+            width: 1480px;
+            min-height: 680px;
+            padding: 30px;
+            transform-origin: top left;
+            transition: transform .2s ease;
+        }
+
+        .view { display: none; }
+        .view.active { display: block; }
+
+        .overview-grid {
+            display: grid;
+            grid-template-columns: 190px 270px 1fr 380px;
+            gap: 18px;
+            align-items: stretch;
+        }
+
+        .panel {
+            position: relative;
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: var(--card);
+            box-shadow: 0 10px 26px rgba(27, 39, 71, .06);
+        }
+
+        .panel-title {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            margin: 0;
+            padding: 15px 17px;
+            border-bottom: 1px solid var(--line);
+            font-size: 16px;
+        }
+
+        .panel-title .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: currentColor;
+            box-shadow: 0 0 0 5px currentColor;
+            opacity: .75;
+        }
+
+        .stack {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 16px;
+        }
+
+        .node {
+            position: relative;
+            padding: 13px 14px;
+            border: 1.5px solid var(--line);
+            border-radius: 14px;
+            background: white;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 800;
+            line-height: 1.35;
+            cursor: pointer;
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+        }
+
+        .node:hover, .node.selected {
+            transform: translateY(-2px);
+            border-color: currentColor;
+            box-shadow: 0 10px 20px rgba(27, 39, 71, .10);
+        }
+
+        .node small {
+            display: block;
+            margin-top: 5px;
+            color: var(--muted);
+            font-weight: 600;
+            line-height: 1.4;
+        }
+
+        .arrow-down::after {
+            content: "↓";
+            position: absolute;
+            left: 50%;
+            bottom: -24px;
+            z-index: 2;
+            transform: translateX(-50%);
+            color: #98a2b3;
+            font-size: 20px;
+            font-weight: 900;
+        }
+
+        .scenario { color: var(--purple); }
+        .access { color: var(--blue); }
+        .scenario .node { background: var(--purple-soft); }
+        .access .node { background: var(--blue-soft); }
+
+        .flow-area {
+            display: grid;
+            grid-template-rows: 1fr 1fr;
+            gap: 18px;
+        }
+
+        .flow-panel { overflow: hidden; }
+        .flow-panel.rag { border-color: #bcd0ff; }
+        .flow-panel.ingest { border-color: #b7e2cb; }
+        .flow-panel.rag .panel-title { color: var(--blue); background: var(--blue-soft); }
+        .flow-panel.ingest .panel-title { color: var(--green); background: var(--green-soft); }
+
+        .flow-row {
+            display: flex;
+            align-items: stretch;
+            gap: 25px;
+            padding: 18px;
+        }
+
+        .flow-row .node {
+            flex: 1 1 0;
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .flow-row .node:not(:last-child)::after {
+            content: "→";
+            position: absolute;
+            right: -22px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #98a2b3;
+            font-size: 20px;
+        }
+
+        .rag .node { color: #174ea6; background: #f7f9ff; }
+        .ingest .node { color: #117547; background: #f7fcf9; }
+
+        .tool-strip {
+            display: flex;
+            gap: 8px;
+            padding: 0 18px 18px;
+        }
+
+        .tool-chip {
+            flex: 1;
+            padding: 9px;
+            border: 1px dashed #9bb8ff;
+            border-radius: 10px;
+            background: #f6f9ff;
+            color: #174ea6;
+            text-align: center;
+            font-size: 12px;
+            font-weight: 750;
+        }
+
+        .aiops {
+            color: var(--orange);
+            border-color: #ffc59d;
+            background: #fffdfb;
+        }
+
+        .aiops .panel-title { background: var(--orange-soft); }
+        .aiops-body { padding: 16px; }
+        .aiops .node { color: #9a4107; background: #fff8f3; }
+
+        .decision {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin: 22px 0 12px;
+        }
+
+        .branch {
+            padding: 8px 5px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 12px;
+            font-weight: 850;
+        }
+
+        .continue { color: #117547; background: var(--green-soft); }
+        .replan { color: #174ea6; background: var(--blue-soft); }
+        .respond { color: #6538c5; background: var(--purple-soft); }
+
+        .loop-note {
+            padding: 10px 12px;
+            border: 1px dashed #f5a164;
+            border-radius: 12px;
+            color: #9a4107;
+            background: #fff7f0;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1.55;
+        }
+
+        .infra {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            margin-top: 18px;
+            padding: 16px;
+            border-radius: var(--radius);
+            background: #202947;
+            color: white;
+        }
+
+        .infra-item {
+            padding: 12px;
+            border: 1px solid rgba(255,255,255,.16);
+            border-radius: 12px;
+            background: rgba(255,255,255,.07);
+            text-align: center;
+            font-size: 13px;
+            font-weight: 750;
+        }
+
+        .detail-view {
+            display: grid;
+            grid-template-columns: 1fr 330px;
+            gap: 22px;
+        }
+
+        .detail-main, .memory-card {
+            padding: 22px;
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: white;
+        }
+
+        .detail-main h2, .memory-card h2 { margin: 0 0 8px; font-size: 22px; }
+        .detail-main > p { margin: 0 0 24px; color: var(--muted); }
+
+        .detail-flow {
+            display: flex;
+            flex-direction: column;
+            gap: 28px;
+        }
+
+        .detail-step {
+            position: relative;
+            display: grid;
+            grid-template-columns: 48px 1fr auto;
+            align-items: center;
+            gap: 14px;
+            padding: 17px;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: #fbfcfe;
+        }
+
+        .detail-step:not(:last-child)::after {
+            content: "";
+            position: absolute;
+            left: 40px;
+            bottom: -29px;
+            width: 2px;
+            height: 29px;
+            background: #cbd5e1;
+        }
+
+        .step-number {
+            display: grid;
+            place-items: center;
+            width: 42px;
+            height: 42px;
+            border-radius: 13px;
+            background: var(--blue);
+            color: white;
+            font-size: 18px;
+            font-weight: 900;
+        }
+
+        .green-view .step-number { background: var(--green); }
+        .orange-view .step-number { background: var(--orange); }
+        .step-copy strong { display: block; margin-bottom: 4px; }
+        .step-copy span { color: var(--muted); font-size: 13px; }
+        .step-tech { color: var(--blue); font-size: 12px; font-weight: 800; }
+        .green-view .step-tech { color: var(--green); }
+        .orange-view .step-tech { color: var(--orange); }
+
+        .memory-card {
+            align-self: start;
+            position: sticky;
+            top: 90px;
+        }
+
+        .memory-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 18px;
+        }
+
+        .memory-item {
+            padding: 13px;
+            border-left: 4px solid var(--blue);
+            border-radius: 0 12px 12px 0;
+            background: var(--blue-soft);
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .memory-item strong { display: block; margin-bottom: 3px; }
+        .green-view + .memory-card .memory-item { border-color: var(--green); background: var(--green-soft); }
+        .orange-view + .memory-card .memory-item { border-color: var(--orange); background: var(--orange-soft); }
+
+        .knowledge-view {
+            padding: 4px;
+        }
+
+        .section-heading {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 18px;
+        }
+
+        .section-heading h2 { margin: 0 0 6px; font-size: 27px; }
+        .section-heading p { margin: 0; color: var(--muted); }
+
+        .search-box {
+            width: 310px;
+            padding: 11px 14px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: white;
+            color: var(--ink);
+            outline: none;
+        }
+
+        .search-box:focus { border-color: var(--blue); box-shadow: 0 0 0 4px rgba(36,107,253,.1); }
+
+        .module-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+        }
+
+        .module-card {
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            background: white;
+            box-shadow: 0 8px 22px rgba(27,39,71,.05);
+        }
+
+        .module-card header {
+            padding: 16px 17px 13px;
+            border-bottom: 1px solid #edf0f5;
+            background: linear-gradient(135deg, #fff, #f7f9fc);
+        }
+
+        .module-card h3 { margin: 0 0 5px; font-size: 17px; }
+        .module-path { color: var(--blue); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 750; }
+        .module-body { padding: 15px 17px 17px; }
+
+        .fact {
+            display: grid;
+            grid-template-columns: 68px 1fr;
+            gap: 10px;
+            margin-bottom: 10px;
+            font-size: 12.5px;
+            line-height: 1.55;
+        }
+
+        .fact:last-child { margin-bottom: 0; }
+        .fact b { color: #344054; }
+        .fact span { color: var(--muted); }
+        .fact.answer { margin-top: 13px; padding-top: 12px; border-top: 1px dashed var(--line); }
+        .fact.answer span { color: var(--ink); font-weight: 650; }
+
+        .qa-layout {
+            display: grid;
+            grid-template-columns: 230px 1fr;
+            gap: 18px;
+        }
+
+        .qa-index {
+            align-self: start;
+            position: sticky;
+            top: 90px;
+            padding: 15px;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: white;
+        }
+
+        .qa-index strong { display: block; margin-bottom: 10px; }
+        .qa-index button {
+            display: block;
+            width: 100%;
+            margin: 4px 0;
+            padding: 8px 10px;
+            border: 0;
+            border-radius: 9px;
+            background: transparent;
+            color: var(--muted);
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .qa-index button:hover { color: var(--blue); background: var(--blue-soft); }
+        .qa-list { display: flex; flex-direction: column; gap: 12px; }
+
+        details.qa {
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: white;
+            box-shadow: 0 6px 18px rgba(27,39,71,.04);
+        }
+
+        details.qa summary {
+            position: relative;
+            padding: 16px 48px 16px 18px;
+            cursor: pointer;
+            list-style: none;
+            font-size: 15px;
+            font-weight: 800;
+        }
+
+        details.qa summary::-webkit-details-marker { display: none; }
+        details.qa summary::after { content: "+"; position: absolute; right: 18px; top: 13px; color: var(--blue); font-size: 22px; }
+        details.qa[open] summary::after { content: "−"; }
+        details.qa[open] summary { border-bottom: 1px solid var(--line); }
+
+        .qa-answer { padding: 16px 18px 18px; font-size: 13px; line-height: 1.72; }
+        .qa-answer p { margin: 0 0 10px; }
+        .qa-answer p:last-child { margin-bottom: 0; }
+        .qa-answer strong { color: #344054; }
+        .speak { padding: 11px 13px; border-left: 4px solid var(--blue); background: var(--blue-soft); border-radius: 0 10px 10px 0; }
+        .follow-up { color: #8a3c08; background: var(--orange-soft); padding: 10px 12px; border-radius: 10px; }
+
+        .evolution-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .evolution-card {
+            padding: 18px;
+            border: 1px solid var(--line);
+            border-radius: 17px;
+            background: white;
+        }
+
+        .evolution-card h3 { margin: 0 0 12px; font-size: 17px; }
+        .evolution-card ul { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.75; }
+        .risk { border-top: 4px solid #e5484d; }
+        .upgrade { border-top: 4px solid var(--green); }
+        .tradeoff { border-top: 4px solid var(--blue); }
+        .metric { border-top: 4px solid var(--purple); }
+
+        .truth-banner {
+            margin-bottom: 17px;
+            padding: 15px 17px;
+            border: 1px solid #f3cf90;
+            border-radius: 14px;
+            background: #fff8e8;
+            color: #754c00;
+            font-size: 13px;
+            line-height: 1.65;
+        }
+
+        .inspector {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            z-index: 30;
+            width: min(390px, calc(100vw - 40px));
+            padding: 18px;
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            background: rgba(255,255,255,.96);
+            box-shadow: var(--shadow);
+            transform: translateY(calc(100% + 40px));
+            transition: transform .25s ease;
+        }
+
+        .inspector.open { transform: translateY(0); }
+        .inspector h3 { margin: 0 32px 7px 0; }
+        .inspector p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; }
+        .inspector-close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            border: 0;
+            border-radius: 8px;
+            background: #f2f4f7;
+            width: 30px;
+            height: 30px;
+            cursor: pointer;
+        }
+
+        .hint {
+            margin-top: 12px;
+            color: var(--muted);
+            text-align: center;
+            font-size: 12px;
+        }
+
+        @media (max-width: 900px) {
+            .shell { width: min(100% - 18px, 1560px); padding-top: 18px; }
+            .hero { align-items: flex-start; flex-direction: column; }
+            .hero-tags { justify-content: flex-start; }
+            .toolbar { align-items: flex-start; flex-direction: column; }
+            .tools { width: 100%; justify-content: flex-end; }
+            .canvas-window { min-height: 610px; }
+            .module-grid, .evolution-grid { grid-template-columns: 1fr; }
+            .qa-layout { grid-template-columns: 1fr; }
+            .qa-index { position: static; }
+        }
+
+        @media print {
+            body { background: white; }
+            .shell { width: 100%; padding: 0; }
+            .toolbar, .hint, .inspector { display: none !important; }
+            .canvas-window { overflow: visible; border: 0; box-shadow: none; }
+            .canvas { transform: scale(.72) !important; transform-origin: top left; }
+        }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">Interview Visual Guide</p>
+                <h1>SuperBizAgent 项目流程框架</h1>
+                <p class="subtitle">RAG 知识问答 + 多轮对话 + AIOps 智能诊断</p>
+            </div>
+            <div class="hero-tags" aria-label="技术栈">
+                <span class="tag">FastAPI</span>
+                <span class="tag">LangGraph</span>
+                <span class="tag">Milvus</span>
+                <span class="tag">MCP</span>
+                <span class="tag">DashScope</span>
+            </div>
+        </header>
+
+        <nav class="toolbar" aria-label="流程图控制栏">
+            <div class="tabs">
+                <button class="active" data-view="overview">项目总览</button>
+                <button data-view="rag">RAG 问答</button>
+                <button data-view="ingest">文档入库</button>
+                <button data-view="aiops">AIOps 诊断</button>
+                <button data-view="modules">模块拆解</button>
+                <button data-view="questions">高频追问</button>
+                <button data-view="evolution">边界与演进</button>
+            </div>
+            <div class="tools">
+                <button id="zoomOut" title="缩小">−</button>
+                <span class="zoom-label" id="zoomLabel">100%</span>
+                <button id="zoomIn" title="放大">＋</button>
+                <button id="resetZoom" title="恢复缩放">重置</button>
+                <button id="fullscreen" title="全屏查看">全屏</button>
+                <button id="printPage" title="打印或导出 PDF">打印</button>
+            </div>
+        </nav>
+
+        <section class="canvas-window" id="canvasWindow">
+            <div class="canvas" id="canvas">
+                <section class="view active" id="overview">
+                    <div class="overview-grid">
+                        <article class="panel scenario">
+                            <h2 class="panel-title"><span class="dot"></span>用户与场景</h2>
+                            <div class="stack">
+                                <div class="node" data-title="实验人员" data-desc="通过统一 Web 页面发起知识问答、上传实验文档，或针对视频卡顿、断流、高延迟等问题启动诊断。">实验人员</div>
+                                <div class="node" data-title="知识问答" data-desc="查询实验步骤、网络参数、编解码配置和历史运维经验。">知识问答</div>
+                                <div class="node" data-title="异常诊断" data-desc="典型场景包括视频卡顿、断流、高延迟，以及服务端或客户端资源异常。">卡顿 / 断流<br>高延迟</div>
+                                <div class="node" data-title="文档上传" data-desc="上传 Markdown、TXT 文档后自动切分、向量化并写入知识库。">文档上传</div>
+                            </div>
+                        </article>
+
+                        <article class="panel access">
+                            <h2 class="panel-title"><span class="dot"></span>接入层</h2>
+                            <div class="stack">
+                                <div class="node arrow-down" data-title="Web 前端" data-desc="负责用户输入、文件上传、对话展示和 AIOps 诊断过程可视化。">Web 前端</div>
+                                <div class="node arrow-down" data-title="FastAPI" data-desc="统一提供静态页面、REST API，并通过 SSE 返回流式对话和诊断事件。">FastAPI</div>
+                                <div class="node" data-title="REST API + SSE" data-desc="REST 接收请求；SSE 持续推送回答 token、执行计划、步骤结果和最终报告。">REST API + SSE</div>
+                                <div class="node" data-title="核心接口" data-desc="/api/upload 文档入库；/api/chat_stream 流式问答；/api/aiops 智能诊断。"><small>/api/upload</small><small>/api/chat_stream</small><small>/api/aiops</small></div>
+                            </div>
+                        </article>
+
+                        <div class="flow-area">
+                            <article class="panel flow-panel rag">
+                                <h2 class="panel-title"><span class="dot"></span>RAG 知识问答流程</h2>
+                                <div class="flow-row">
+                                    <div class="node" data-title="RAG Agent" data-desc="LangGraph Agent 根据问题与上下文自主决定是否调用知识库、时间、MCP 或可选联网搜索工具。">RAG Agent<small>LangGraph + MemorySaver</small></div>
+                                    <div class="node" data-title="知识库优先" data-desc="系统提示词要求优先检索内部知识；仅当知识不足时再使用 Tavily。">知识库优先</div>
+                                    <div class="node" data-title="宽召回" data-desc="Milvus 先召回 20 个候选分片，提升相关内容不被遗漏的概率。">Milvus<small>宽召回 Top 20</small></div>
+                                    <div class="node" data-title="重排" data-desc="FlashRank Cross-Encoder 按 query 与 passage 的相关性重排，保留 Top 3。">FlashRank<small>重排 Top 3</small></div>
+                                    <div class="node" data-title="答案生成" data-desc="通义千问结合用户问题、会话上下文和检索证据生成答案，并通过 SSE 流式返回。">Qwen 生成<small>SSE 流式返回</small></div>
+                                </div>
+                                <div class="tool-strip">
+                                    <div class="tool-chip">retrieve_knowledge</div>
+                                    <div class="tool-chip">get_current_time</div>
+                                    <div class="tool-chip">Tavily（可选）</div>
+                                    <div class="tool-chip">MCP Tools</div>
+                                </div>
+                            </article>
+
+                            <article class="panel flow-panel ingest">
+                                <h2 class="panel-title"><span class="dot"></span>文档入库流程</h2>
+                                <div class="flow-row">
+                                    <div class="node" data-title="上传并保存" data-desc="校验扩展名和文件大小，规范化文件名后保存到 uploads 目录。">Markdown / TXT<small>保存 uploads</small></div>
+                                    <div class="node" data-title="覆盖更新" data-desc="索引前按来源路径删除旧分片，避免同一文档重复入库。">删除同源旧数据</div>
+                                    <div class="node" data-title="文档切分" data-desc="Markdown 先按标题层级切分，再递归切分；chunk 800，overlap 100，并合并过小分片。">标题 + 递归切分<small>800 / overlap 100</small></div>
+                                    <div class="node" data-title="向量化" data-desc="调用 DashScope text-embedding-v4，将文档分片转换为 1024 维向量。">DashScope<small>Embedding 1024 维</small></div>
+                                    <div class="node" data-title="Milvus 存储" data-desc="向量、原文和元数据写入 biz Collection，供 RAG 相似度检索。">Milvus<small>biz Collection</small></div>
+                                </div>
+                            </article>
+                        </div>
+
+                        <article class="panel aiops">
+                            <h2 class="panel-title"><span class="dot"></span>AIOps：Plan-Execute-Replan</h2>
+                            <div class="aiops-body stack">
+                                <div class="node arrow-down" data-title="诊断请求" data-desc="系统使用标准化 AIOps 任务描述启动当前告警诊断，并要求最终输出 Markdown 报告。">告警诊断请求</div>
+                                <div class="node arrow-down" data-title="Planner" data-desc="先查询内部运维经验，再读取所有本地与 MCP 工具描述，由 LLM 生成结构化执行计划。">Planner 制定计划<small>经验文档 + 可用工具</small></div>
+                                <div class="node arrow-down" data-title="Executor" data-desc="每轮只执行计划首个步骤：LLM 选择工具，ToolNode 调用工具，再由 LLM 汇总该步证据。">Executor 执行单步<small>LLM → ToolNode → 证据</small></div>
+                                <div class="node" data-title="Replanner" data-desc="结合原始任务、剩余计划和执行历史，在 continue、replan、respond 中决策；最多执行 8 步。">Replanner 评估<small>最大 8 步</small></div>
+                                <div class="decision">
+                                    <div class="branch continue">continue</div>
+                                    <div class="branch replan">replan</div>
+                                    <div class="branch respond">respond</div>
+                                </div>
+                                <div class="loop-note">continue / replan → 回到 Executor<br>respond → Markdown 报告 → SSE 返回</div>
+                                <div class="node" data-title="MCP 工具链" data-desc="MCP Client 统一加载 CLS 日志检索与 Monitor CPU/内存指标工具；调用失败采用指数退避重试。">MCP Client<small>CLS 日志 + Monitor 指标</small></div>
+                            </div>
+                        </article>
+                    </div>
+
+                    <div class="infra" aria-label="基础设施与平台">
+                        <div class="infra-item">DashScope<br>Qwen + Embedding</div>
+                        <div class="infra-item">Milvus<br>向量数据库</div>
+                        <div class="infra-item">LangChain / LangGraph<br>Agent 与工作流</div>
+                        <div class="infra-item">FastMCP<br>日志与监控工具</div>
+                        <div class="infra-item">Docker Compose<br>本地基础设施</div>
+                    </div>
+                </section>
+
+                <section class="view" id="rag">
+                    <div class="detail-view">
+                        <article class="detail-main">
+                            <h2>RAG 多轮问答：从问题到有依据的答案</h2>
+                            <p>核心不是“向量检索后直接拼 Prompt”，而是让 Agent 根据问题自主选择工具，并保留会话状态。</p>
+                            <div class="detail-flow">
+                                <div class="detail-step"><span class="step-number">1</span><div class="step-copy"><strong>接收问题与 session_id</strong><span>FastAPI 将用户问题交给 RagAgentService，并用 thread_id 隔离会话。</span></div><span class="step-tech">FastAPI</span></div>
+                                <div class="detail-step"><span class="step-number">2</span><div class="step-copy"><strong>Agent 判断是否调用工具</strong><span>知识库优先，必要时使用时间、MCP 或 Tavily。</span></div><span class="step-tech">LangGraph Agent</span></div>
+                                <div class="detail-step"><span class="step-number">3</span><div class="step-copy"><strong>Milvus 宽召回</strong><span>问题向量化后召回 Top 20 文档分片，保证召回率。</span></div><span class="step-tech">Embedding + Milvus</span></div>
+                                <div class="detail-step"><span class="step-number">4</span><div class="step-copy"><strong>FlashRank 精排</strong><span>Cross-Encoder 重新计算相关性，只保留 Top 3 高质量上下文。</span></div><span class="step-tech">Rerank</span></div>
+                                <div class="detail-step"><span class="step-number">5</span><div class="step-copy"><strong>生成并流式输出</strong><span>Qwen 基于工具结果生成答案，SSE 逐片推送给浏览器。</span></div><span class="step-tech">Qwen + SSE</span></div>
+                            </div>
+                        </article>
+                        <aside class="memory-card">
+                            <h2>面试怎么讲</h2>
+                            <div class="memory-list">
+                                <div class="memory-item"><strong>为什么用 Agent？</strong>问题类型不固定，需要动态决定查知识库、当前时间、日志还是监控。</div>
+                                <div class="memory-item"><strong>为什么先宽召回再重排？</strong>向量检索保证召回率，Cross-Encoder 提升排序精度，兼顾效果和上下文成本。</div>
+                                <div class="memory-item"><strong>多轮对话怎么做？</strong>MemorySaver 以 session_id 作为 thread_id 保存 LangGraph checkpoint。</div>
+                                <div class="memory-item"><strong>一句话</strong>Agent 负责决策，Milvus 负责召回，FlashRank 负责精排，Qwen 负责生成。</div>
+                            </div>
+                        </aside>
+                    </div>
+                </section>
+
+                <section class="view" id="ingest">
+                    <div class="detail-view">
+                        <article class="detail-main green-view">
+                            <h2>文档入库：从原始文件到可检索知识</h2>
+                            <p>上传后立即自动索引，并通过“先删同源旧数据”支持文档覆盖更新。</p>
+                            <div class="detail-flow">
+                                <div class="detail-step"><span class="step-number">1</span><div class="step-copy"><strong>文件校验与落盘</strong><span>支持 Markdown/TXT，校验文件名、扩展名和大小，保存到 uploads。</span></div><span class="step-tech">UploadFile</span></div>
+                                <div class="detail-step"><span class="step-number">2</span><div class="step-copy"><strong>删除同源旧索引</strong><span>按规范化 source 路径删除已有数据，避免重复分片。</span></div><span class="step-tech">Milvus delete</span></div>
+                                <div class="detail-step"><span class="step-number">3</span><div class="step-copy"><strong>结构化切分</strong><span>MarkdownHeaderTextSplitter 保留标题语义，再递归切分并合并小块。</span></div><span class="step-tech">800 / 100</span></div>
+                                <div class="detail-step"><span class="step-number">4</span><div class="step-copy"><strong>批量向量化</strong><span>text-embedding-v4 输出 1024 维向量。</span></div><span class="step-tech">DashScope</span></div>
+                                <div class="detail-step"><span class="step-number">5</span><div class="step-copy"><strong>写入向量库</strong><span>保存 id、vector、content、metadata 到 biz Collection。</span></div><span class="step-tech">Milvus</span></div>
+                            </div>
+                        </article>
+                        <aside class="memory-card">
+                            <h2>设计亮点</h2>
+                            <div class="memory-list">
+                                <div class="memory-item"><strong>结构感知切分</strong>先按 Markdown 标题切，能保留章节层级到 metadata。</div>
+                                <div class="memory-item"><strong>分片策略</strong>chunk 800、overlap 100，在语义完整度与检索粒度间折中。</div>
+                                <div class="memory-item"><strong>幂等更新</strong>先删除同源数据再写入，保证重复上传不会产生脏数据。</div>
+                                <div class="memory-item"><strong>一句话</strong>文件落盘、结构切分、向量化、Milvus 持久化。</div>
+                            </div>
+                        </aside>
+                    </div>
+                </section>
+
+                <section class="view" id="aiops">
+                    <div class="detail-view">
+                        <article class="detail-main orange-view">
+                            <h2>AIOps：基于证据的动态诊断闭环</h2>
+                            <p>LangGraph 将复杂诊断拆成可观察的计划、执行、评估循环，每一步都可通过 SSE 展示。</p>
+                            <div class="detail-flow">
+                                <div class="detail-step"><span class="step-number">1</span><div class="step-copy"><strong>Planner 制定计划</strong><span>先检索内部经验，再结合本地工具和 MCP 工具生成结构化步骤。</span></div><span class="step-tech">Structured Output</span></div>
+                                <div class="detail-step"><span class="step-number">2</span><div class="step-copy"><strong>Executor 执行一个步骤</strong><span>每轮只取 plan[0]，LLM 选工具，ToolNode 执行，再汇总结果。</span></div><span class="step-tech">ToolNode</span></div>
+                                <div class="detail-step"><span class="step-number">3</span><div class="step-copy"><strong>MCP 收集外部证据</strong><span>CLS 查询日志，Monitor 查询 CPU/内存指标；失败时指数退避重试。</span></div><span class="step-tech">FastMCP</span></div>
+                                <div class="detail-step"><span class="step-number">4</span><div class="step-copy"><strong>Replanner 动态评估</strong><span>continue 继续；replan 替换剩余步骤；respond 结束并生成报告。</span></div><span class="step-tech">条件边</span></div>
+                                <div class="detail-step"><span class="step-number">5</span><div class="step-copy"><strong>报告与过程流式返回</strong><span>输出计划、步骤完成、最终 Markdown 报告和 complete 事件。</span></div><span class="step-tech">SSE</span></div>
+                            </div>
+                        </article>
+                        <aside class="memory-card">
+                            <h2>面试怎么讲</h2>
+                            <div class="memory-list">
+                                <div class="memory-item"><strong>为什么要 Replan？</strong>故障诊断无法一次规划准确，需要根据日志和指标结果动态调整。</div>
+                                <div class="memory-item"><strong>怎么避免无限循环？</strong>限制最多 8 个执行步骤，执行 5 步后禁止再次扩展计划。</div>
+                                <div class="memory-item"><strong>MCP 的价值？</strong>把日志和监控封装成标准工具，Agent 与具体数据源解耦。</div>
+                                <div class="memory-item"><strong>一句话</strong>规划拆任务，执行拿证据，复盘调路径，最后出报告。</div>
+                            </div>
+                        </aside>
+                    </div>
+                </section>
+
+                <section class="view knowledge-view" id="modules">
+                    <div class="section-heading">
+                        <div>
+                            <h2>模块级拆解</h2>
+                            <p>按“职责、输入输出、关键实现、设计理由、深挖回答”理解代码，而不是只背技术名词。</p>
+                        </div>
+                        <input class="search-box" id="moduleSearch" type="search" placeholder="搜索模块、文件或关键词">
+                    </div>
+                    <div class="module-grid" id="moduleGrid">
+                        <article class="module-card">
+                            <header><h3>应用入口与生命周期</h3><span class="module-path">app/main.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>职责</b><span>创建 FastAPI、注册四类路由、挂载静态文件、配置 CORS，并管理 Milvus 生命周期。</span></div>
+                                <div class="fact"><b>关键点</b><span>lifespan 启动时 connect，关闭时 close；STATIC_DIR 使用绝对路径，避免 cwd 改变导致资源丢失。</span></div>
+                                <div class="fact"><b>取舍</b><span>应用启动依赖 Milvus 成功，更适合强依赖知识库的原型；生产可改为健康降级或延迟连接。</span></div>
+                                <div class="fact answer"><b>面试回答</b><span>“入口层只做装配和生命周期管理，业务逻辑下沉到 service，避免路由变成胖控制器。”</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>API 与 SSE 适配层</h3><span class="module-path">app/api/chat.py · aiops.py · file.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>职责</b><span>校验请求、调用服务、把内部事件转换为 HTTP JSON 或 SSE message。</span></div>
+                                <div class="fact"><b>事件</b><span>聊天输出 content/done/error；AIOps 输出 plan/step_complete/report/complete/error。</span></div>
+                                <div class="fact"><b>价值</b><span>浏览器能边接收边渲染，降低长耗时 LLM 和多步诊断的体感延迟，也让过程可观察。</span></div>
+                                <div class="fact answer"><b>深挖点</b><span>“SSE 是单向服务端推送，当前场景不需要 WebSocket 的双向长连接，协议更简单。”</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>RAG Agent 编排</h3><span class="module-path">app/services/rag_agent_service.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>职责</b><span>创建 ChatQwen Agent，合并本地工具与 MCP 工具，提供同步和流式查询、会话读取与清理。</span></div>
+                                <div class="fact"><b>状态</b><span>MemorySaver 使用 session_id 作为 thread_id，保存 LangGraph checkpoint，实现多轮上下文隔离。</span></div>
+                                <div class="fact"><b>策略</b><span>系统提示约束“内部知识库优先，知识不足再联网”，减少外部信息覆盖内部规范。</span></div>
+                                <div class="fact answer"><b>注意</b><span>代码定义了 trim_messages_middleware，但当前 create_agent 未注册它；不能声称历史修剪已经生效。</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>知识检索工具</h3><span class="module-path">app/tools/knowledge_tool.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>输入输出</b><span>输入 query；输出格式化上下文和原始 Document artifact，工具声明为 content_and_artifact。</span></div>
+                                <div class="fact"><b>流程</b><span>Milvus fetch_k 宽召回 → 可选 FlashRank 重排 → 截断 rag_top_k → 带来源和标题格式化。</span></div>
+                                <div class="fact"><b>失败</b><span>捕获异常并返回错误文本与空文档，Agent 可据此诚实降级，而不是中断整个对话。</span></div>
+                                <div class="fact answer"><b>面试回答</b><span>“把检索封装成 Tool 后，是否检索由 Agent 决策，RAG 不再是每个问题都固定执行的流水线。”</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>向量召回与重排</h3><span class="module-path">vector_store_manager.py · rerank_service.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>召回</b><span>默认从 Milvus 获取 20 个候选，向量相似度适合快速缩小语义搜索空间。</span></div>
+                                <div class="fact"><b>重排</b><span>FlashRank Cross-Encoder 同时看 query 与 passage，精排后保留 3 条，并写入 _rerank_score。</span></div>
+                                <div class="fact"><b>降级</b><span>模型延迟初始化；重排异常或映射不完整时退化为向量原顺序 Top 3。</span></div>
+                                <div class="fact answer"><b>取舍</b><span>“两阶段检索用少量本地精排计算换取更高相关性，并控制最终 Prompt 长度。”</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>文档切分</h3><span class="module-path">app/services/document_splitter_service.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>Markdown</b><span>先按 h1/h2/h3 标题切分并保留层级元数据，再用 RecursiveCharacterTextSplitter 二次切分。</span></div>
+                                <div class="fact"><b>参数</b><span>chunk_max_size=800、overlap=100；小于 300 字符的相邻块会尝试合并。</span></div>
+                                <div class="fact"><b>理由</b><span>标题切分保留结构语义，递归切分控制模型上下文粒度，overlap 避免边界信息断裂。</span></div>
+                                <div class="fact answer"><b>深挖点</b><span>参数不是永恒最优，应通过 Recall@K、回答正确率和 token 成本做数据驱动调优。</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>Embedding 与索引</h3><span class="module-path">vector_embedding_service.py · vector_index_service.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>Embedding</b><span>DashScope text-embedding-v4，统一输出 1024 维；文档批量 embed，查询单条 embed。</span></div>
+                                <div class="fact"><b>幂等</b><span>索引前按 metadata._source 删除同源旧分片，然后重新切分和批量写入。</span></div>
+                                <div class="fact"><b>ID</b><span>Milvus auto_id=False，每个 Document 使用 UUID 主键。</span></div>
+                                <div class="fact answer"><b>注意</b><span>上传成功但索引失败时接口仍返回 200，目前只记录日志；生产应返回 indexing_status 或异步任务 ID。</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>Milvus 连接与 Schema</h3><span class="module-path">app/core/milvus_client.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>Schema</b><span>biz Collection 包含 id、1024 维 vector、content、JSON metadata，默认 2 shards。</span></div>
+                                <div class="fact"><b>启动</b><span>检查 Collection，不存在则创建；存在但向量维度不匹配时会删除并重建。</span></div>
+                                <div class="fact"><b>兼容</b><span>补丁把 langchain_milvus 创建的 MilvusClient ORM alias 统一到 default，处理连接别名不一致问题。</span></div>
+                                <div class="fact answer"><b>风险</b><span>维度不匹配直接 drop Collection 会丢数据；生产要迁移到新 Collection，再原子切换 alias。</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>AIOps 状态图</h3><span class="module-path">app/services/aiops_service.py · state.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>状态</b><span>input、plan、past_steps、response；past_steps 用 operator.add 追加，保留完整证据链。</span></div>
+                                <div class="fact"><b>图结构</b><span>Planner → Executor → Replanner；Replanner 条件边决定回到 Executor 或 END。</span></div>
+                                <div class="fact"><b>流式</b><span>graph.astream(stream_mode="updates") 将每个节点更新映射为前端事件。</span></div>
+                                <div class="fact answer"><b>面试回答</b><span>“显式状态图让每个阶段可测试、可追踪，也比一个超长 ReAct 循环更容易限制成本和终止条件。”</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>Planner / Executor / Replanner</h3><span class="module-path">app/agent/aiops/*.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>Planner</b><span>检索内部经验、获取工具描述，通过 Pydantic 结构化输出 Plan.steps。</span></div>
+                                <div class="fact"><b>Executor</b><span>只执行 plan[0]；LLM bind_tools 选工具，ToolNode 执行，再把工具结果交给 LLM 总结。</span></div>
+                                <div class="fact"><b>Replanner</b><span>结构化输出 continue/replan/respond；最多 8 步，执行 5 步后禁止 replan。</span></div>
+                                <div class="fact answer"><b>取舍</b><span>单步执行便于每轮根据证据纠偏；代价是 LLM 调用次数增加，需要步数上限控制延迟和费用。</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>MCP 客户端与工具服务</h3><span class="module-path">app/agent/mcp_client.py · mcp_servers/</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>客户端</b><span>MultiServerMCPClient 延迟单例初始化，同时接入 cls:8003 与 monitor:8004。</span></div>
+                                <div class="fact"><b>可靠性</b><span>Interceptor 最多重试 3 次，等待 1s、2s；最终返回 isError 工具结果而非抛出。</span></div>
+                                <div class="fact"><b>工具</b><span>CLS 提供时间、地域、主题和日志查询；Monitor 提供 CPU、内存时序和阈值判断。</span></div>
+                                <div class="fact answer"><b>价值</b><span>“MCP 把外部能力标准化，Agent 只依赖工具 schema；替换 CLS 或 Prometheus 时不必重写编排。”</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>配置、降级与可观测性</h3><span class="module-path">app/config.py · Loguru · .env</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>配置</b><span>Pydantic Settings 从仓库根目录 .env 加载；rag_fetch_k 会自动校正为不小于 rag_top_k。</span></div>
+                                <div class="fact"><b>降级</b><span>Tavily 无 Key 时不注册；FlashRank 失败退化；MCP 失败返回错误证据；Executor 失败仍记录 past_steps。</span></div>
+                                <div class="fact"><b>日志</b><span>关键节点记录会话、工具调用、执行耗时和异常，便于复盘 Agent 行为。</span></div>
+                                <div class="fact answer"><b>不足</b><span>当前没有指标、分布式 trace、token 成本和检索评测看板；生产应接 OpenTelemetry 与离线评测集。</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>前端交互与事件消费</h3><span class="module-path">static/index.html · app.js · styles.css</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>职责</b><span>维护本地会话入口、快速/流式模式、文件上传、AIOps 展示和 Markdown 渲染。</span></div>
+                                <div class="fact"><b>SSE</b><span>使用 fetch 读取 response.body 流，手动解析 event/data 行，再按 content、done、error 或 AIOps 事件更新 UI。</span></div>
+                                <div class="fact"><b>取舍</b><span>原生 HTML/CSS/JS 部署简单，无构建链；复杂状态增多后维护成本会高于 React/Vue。</span></div>
+                                <div class="fact answer"><b>改进</b><span>抽取统一 SSE parser、AbortController 取消请求、断线恢复、事件 schema 校验和组件化状态管理。</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>请求与响应模型</h3><span class="module-path">app/models/*.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>职责</b><span>Pydantic 定义 ChatRequest、ClearRequest、AIOpsRequest 和会话响应，承担类型校验与 OpenAPI 文档生成。</span></div>
+                                <div class="fact"><b>兼容</b><span>ChatRequest 用 alias 接收 Id/Question，同时 populate_by_name=True，可兼容内部字段 id/question。</span></div>
+                                <div class="fact"><b>价值</b><span>协议模型与服务状态分离，避免外部请求字段直接污染 Agent 内部结构。</span></div>
+                                <div class="fact answer"><b>不足</b><span>聊天接口的实际 dict 响应没有统一 response_model；生产应统一错误码、事件 schema 和版本策略。</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>本地工具与可选联网搜索</h3><span class="module-path">app/tools/time_tool.py · tavily_search_tool.py · __init__.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>注册</b><span>基础工具是知识库和当前时间；with_optional_tavily 只在配置 API Key 时追加公网搜索。</span></div>
+                                <div class="fact"><b>原则</b><span>内部规范优先，公网搜索只补充知识库缺失或时效性信息，并要求回答区分来源。</span></div>
+                                <div class="fact"><b>价值</b><span>条件注册比“注册后调用时报错”更干净，模型也不会看到不可用工具。</span></div>
+                                <div class="fact answer"><b>安全</b><span>生产需要域名 allowlist、结果清洗、超时、内容注入防护和外部来源可信度标记。</span></div>
+                            </div>
+                        </article>
+
+                        <article class="module-card">
+                            <header><h3>模型适配与代码演进痕迹</h3><span class="module-path">app/core/llm_factory.py · vector_search_service.py</span></header>
+                            <div class="module-body">
+                                <div class="fact"><b>LLM</b><span>LLMFactory 提供 OpenAI-compatible ChatOpenAI 适配，但当前 RAG/AIOps 主链直接使用 langchain_qwq.ChatQwen。</span></div>
+                                <div class="fact"><b>检索</b><span>VectorSearchService 提供底层 pymilvus L2 搜索；当前知识工具主链使用 langchain_milvus VectorStore + FlashRank。</span></div>
+                                <div class="fact"><b>判断</b><span>这反映了项目迭代后的两套路径，不应把它们描述成同一请求同时执行。</span></div>
+                                <div class="fact answer"><b>重构</b><span>统一模型工厂和 Retriever 接口，删除或标记 legacy 实现，避免参数、指标类型和异常语义分叉。</span></div>
+                            </div>
+                        </article>
+                    </div>
+                </section>
+
+                <section class="view knowledge-view" id="questions">
+                    <div class="section-heading">
+                        <div><h2>高频追问与可复述回答</h2><p>先用 20 秒短答建立结论，再根据面试官兴趣展开实现与取舍。</p></div>
+                        <button id="toggleAnswers" class="tag" type="button">展开全部</button>
+                    </div>
+                    <div class="qa-layout">
+                        <aside class="qa-index">
+                            <strong>问题分类</strong>
+                            <button data-qa-filter="all">全部问题</button>
+                            <button data-qa-filter="architecture">架构设计</button>
+                            <button data-qa-filter="rag">RAG 检索</button>
+                            <button data-qa-filter="agent">Agent / LangGraph</button>
+                            <button data-qa-filter="mcp">MCP / AIOps</button>
+                            <button data-qa-filter="engineering">工程与生产化</button>
+                        </aside>
+                        <div class="qa-list" id="qaList">
+                            <details class="qa" data-category="architecture"><summary>1. 请你用一分钟介绍这个项目</summary><div class="qa-answer"><p class="speak"><strong>可直接回答：</strong>这是一个面向实验室双机视频传输场景的智能知识与运维平台。我把分散的实验文档做成 Milvus RAG 知识库，用 LangGraph Agent 支持多轮问答；故障诊断侧采用 Plan-Execute-Replan，把日志、CPU、内存等能力通过 MCP 接成标准工具，诊断过程通过 SSE 实时返回。项目的重点不是单次调用大模型，而是把知识、工具、状态和可观察执行流程组合成完整系统。</p><p class="follow-up"><strong>可能追问：</strong>为什么不是普通聊天机器人？回答业务闭环：文档入库、检索问答、日志指标联动诊断。</p></div></details>
+
+                            <details class="qa" data-category="architecture"><summary>2. 为什么选择 FastAPI + LangGraph，而不是全写在一个服务函数里？</summary><div class="qa-answer"><p><strong>短答：</strong>FastAPI 负责协议和依赖装配，LangGraph 负责有状态、可循环、可中断的 Agent 工作流，两者职责不同。</p><p class="speak"><strong>展开：</strong>普通 RAG 查询相对线性，但 AIOps 会根据中间证据决定继续、改计划或结束。用状态图能显式定义节点、状态字段和条件边，每个节点可独立测试，SSE 也能直接映射节点更新。如果写成一个大函数，状态、重试、终止和观测会互相缠绕。</p></div></details>
+
+                            <details class="qa" data-category="rag"><summary>3. RAG 的完整链路是什么？</summary><div class="qa-answer"><p class="speak"><strong>可直接回答：</strong>文档侧先校验落盘，按 Markdown 标题和递归字符切分，调用 text-embedding-v4 生成 1024 维向量，写入 Milvus。查询侧 Agent 决定调用 retrieve_knowledge，先从 Milvus 宽召回 20 条，再用 FlashRank Cross-Encoder 重排到 3 条，最后把带来源的上下文交给 Qwen 生成答案。</p><p><strong>补充：</strong>重排失败会退化为向量原顺序截断，保证服务可用。</p></div></details>
+
+                            <details class="qa" data-category="rag"><summary>4. 为什么要“Top 20 召回 + Top 3 重排”？</summary><div class="qa-answer"><p><strong>短答：</strong>向量检索快但排序精度有限，Cross-Encoder 精度高但计算贵，所以先宽召回缩小集合，再精排。</p><p class="speak"><strong>深入：</strong>Embedding 是分别编码 query 和 document，适合大规模 ANN；Cross-Encoder 联合编码 query-passage，更能识别细粒度语义。20 和 3 是当前配置，不应当拍脑袋固定，应该用 Recall@20、MRR、答案正确率、延迟和 token 成本做联合调参。</p></div></details>
+
+                            <details class="qa" data-category="rag"><summary>5. chunk=800、overlap=100 是怎么定的？</summary><div class="qa-answer"><p><strong>回答原则：</strong>不要说这是最佳值。</p><p class="speak">当前文档以运维说明和 Markdown 为主，800 字符能保留一个相对完整的检查步骤，100 字符 overlap 降低关键信息跨边界被切断的概率。项目还先按标题层级切分，并合并过小块。更严谨的做法是建立问答评测集，对不同 chunk 大小、重叠和 Top K 做网格实验。</p></div></details>
+
+                            <details class="qa" data-category="rag"><summary>6. 如何避免模型编造答案？</summary><div class="qa-answer"><p class="speak">第一，系统提示要求知识库优先且不得编造工具未返回内容；第二，检索结果带来源和标题，便于引用；第三，工具失败返回显式错误，最终报告要求如实写明失败；第四，AIOps 报告基于 past_steps 证据生成。当前仍不是强保证，生产可增加引用校验、无证据拒答、结构化 claim-evidence 对齐和事实评测。</p></div></details>
+
+                            <details class="qa" data-category="agent"><summary>7. 多轮对话是怎么实现的？会有什么问题？</summary><div class="qa-answer"><p class="speak">LangGraph 使用 MemorySaver 作为 checkpointer，API 传入的 session_id 映射为 thread_id，因此不同会话的消息状态隔离。优点是实现简单、适合演示；缺点是进程重启丢失、无法多实例共享、历史增长会占内存。代码虽然定义了保留系统消息和最近对话的 trim 函数，但当前未挂到 create_agent，所以我会把它作为待完善项，而不会声称已生效。</p><p class="follow-up"><strong>生产方案：</strong>Postgres/Redis checkpointer + TTL + 摘要记忆 + 用户级鉴权。</p></div></details>
+
+                            <details class="qa" data-category="agent"><summary>8. Plan-Execute-Replan 与 ReAct 有什么区别？</summary><div class="qa-answer"><p class="speak">ReAct 通常是模型在一个循环里交替思考和调用工具，灵活但过程容易发散。Plan-Execute-Replan 先显式生成多步计划，每次只执行一步，再根据累计证据评估继续、改计划或结束。它更适合长链路诊断，因为计划、历史和终止条件都是显式状态，代价是 LLM 调用次数更多。</p></div></details>
+
+                            <details class="qa" data-category="agent"><summary>9. AIOps 状态如何更新？为什么 past_steps 用 operator.add？</summary><div class="qa-answer"><p class="speak">状态包含 input、plan、past_steps、response。Executor 返回 plan[1:] 来覆盖剩余计划，同时返回一个新的 (task, result)；past_steps 标注 operator.add 后，LangGraph 会追加而不是覆盖历史。这样 Replanner 和最终报告能看到完整执行证据，也方便前端展示进度。</p></div></details>
+
+                            <details class="qa" data-category="agent"><summary>10. 如何防止 Agent 无限循环或成本失控？</summary><div class="qa-answer"><p class="speak">代码有三层限制：Replanner 优先级是 respond 高于 continue 高于 replan；执行达到 5 步后禁止再次 replan；达到 8 步强制生成最终响应。另外 replan 的新步骤不能多于当前剩余步骤。生产还会增加总 token、总耗时、工具调用次数、单工具超时和用户取消信号。</p></div></details>
+
+                            <details class="qa" data-category="mcp"><summary>11. MCP 在项目里解决了什么问题？</summary><div class="qa-answer"><p class="speak">MCP 把日志和监控系统暴露为带 schema 的标准工具。Agent 通过 MultiServerMCPClient 动态获取工具，不需要知道 CLS 或监控服务的 SDK 细节。这样工具服务可独立部署和替换，编排层只依赖统一协议。当前连接两个服务：CLS 日志工具和 Monitor CPU/内存工具。</p><p class="follow-up"><strong>追问安全：</strong>生产要增加工具白名单、参数校验、租户隔离、只读权限和审计日志。</p></div></details>
+
+                            <details class="qa" data-category="mcp"><summary>12. MCP 工具失败怎么办？</summary><div class="qa-answer"><p class="speak">客户端拦截器最多调用 3 次，重试间隔是 1 秒和 2 秒的指数退避。全部失败后不向上抛异常，而是返回 isError=True 的 CallToolResult。这样 Executor 会把失败作为一步证据写入 past_steps，最终报告可以明确说明数据缺失，而不是整条诊断链崩溃。</p><p><strong>可改进：</strong>加入 jitter、熔断、按错误类型判断是否重试，以及全链路 deadline。</p></div></details>
+
+                            <details class="qa" data-category="mcp"><summary>13. 日志与监控如何共同定位视频传输故障？</summary><div class="qa-answer"><p class="speak">先用监控判断服务端或客户端是否存在 CPU、内存压力，再按告警时间窗口查询两端日志，寻找编码失败、连接拒绝、超时或缓冲异常。Replanner 根据证据决定是否补查另一个节点或缩小时间范围。最终报告要把“现象、指标、日志、根因、建议”串起来，而不是只罗列工具返回。</p></div></details>
+
+                            <details class="qa" data-category="engineering"><summary>14. 为什么用 SSE，不用 WebSocket？</summary><div class="qa-answer"><p class="speak">这里主要是客户端发起一次 HTTP 请求，服务端持续返回 token 和诊断状态，通信方向基本是单向的。SSE 基于 HTTP，浏览器处理简单，断线语义和代理兼容性也更直接。若未来需要用户中途交互式修改计划、双向控制或高频二进制数据，再考虑 WebSocket。</p></div></details>
+
+                            <details class="qa" data-category="engineering"><summary>15. 系统有哪些降级设计？</summary><div class="qa-answer"><p class="speak">Tavily 没有 API Key 时根本不注册；FlashRank 初始化或重排失败就用向量原顺序；MCP 失败经重试后返回错误结果；Executor 异常会跳过当前步骤并记录失败；知识工具异常返回空 artifact。降级目标是保住主流程，但要通过日志和最终报告暴露降级，不能静默伪装成功。</p></div></details>
+
+                            <details class="qa" data-category="engineering"><summary>16. 这个项目距离生产环境还缺什么？</summary><div class="qa-answer"><p class="speak">主要有五类：持久化会话与多实例状态共享；真实 CLS/Prometheus 数据源；鉴权、租户隔离和工具权限；异步索引任务与状态反馈；完整可观测和评测，包括 trace、token、延迟、Recall@K、答案正确率。还要处理 Milvus Schema 迁移，不能维度不匹配就直接删库。</p></div></details>
+
+                            <details class="qa" data-category="engineering"><summary>17. 如何评价 RAG 和 Agent 的效果？</summary><div class="qa-answer"><p class="speak">离线层建立问题、标准答案、相关文档和预期工具轨迹数据集；检索看 Recall@K、MRR、NDCG，生成看事实正确率、引用一致性和拒答准确率，Agent 看任务成功率、工具选择正确率、平均步数和循环率。在线层看 P95 延迟、首 token 时间、错误率、token 成本和用户反馈。</p></div></details>
+
+                            <details class="qa" data-category="engineering"><summary>18. 如果并发量上来，瓶颈在哪里？怎么优化？</summary><div class="qa-answer"><p class="speak">瓶颈主要是外部 LLM/Embedding 调用、FlashRank CPU、Milvus 检索和长连接数量。可以把上传索引改为队列异步任务；Embedding 批处理与缓存；FlashRank 做进程池或独立服务；限制每用户并发与 Agent 步数；SSE 服务水平扩展；会话 checkpoint 外置；工具调用设置超时、限流和熔断。</p></div></details>
+
+                            <details class="qa" data-category="architecture"><summary>19. 为什么代码里既有 LLMFactory，又直接使用 ChatQwen？</summary><div class="qa-answer"><p class="speak">这是项目演进留下的两种适配方式。LLMFactory 基于 ChatOpenAI，便于切换任何 OpenAI-compatible 提供商；当前 Agent 主链使用 langchain_qwq.ChatQwen，是为了更直接适配通义工具调用和流式行为。面试时我会如实说明当前没有完全统一，下一步应让 Agent 依赖抽象模型工厂，并针对结构化输出、工具调用和流式能力做 provider capability 配置。</p></div></details>
+
+                            <details class="qa" data-category="rag"><summary>20. 为什么仓库里有两套向量搜索实现？</summary><div class="qa-answer"><p class="speak">VectorSearchService 是较底层的 pymilvus 搜索路径，直接生成 query vector 并用 L2 检索；当前 RAG 主链已经演进为 VectorStoreManager，通过 langchain_milvus Retriever 宽召回，再接 FlashRank 重排。两者不是同时运行。工程上应该保留统一 Retriever 抽象后删除 legacy 路径，避免搜索参数和距离语义不一致。</p></div></details>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="view knowledge-view" id="evolution">
+                    <div class="section-heading"><div><h2>项目边界、风险与生产化演进</h2><p>面试中主动区分“当前已实现”和“下一步设计”，可信度通常比堆砌技术名词更重要。</p></div></div>
+                    <div class="truth-banner"><strong>当前定位：</strong>这是一个完整可演示的智能运维原型，核心工作流、RAG、MCP、SSE 已经打通；日志和监控 MCP 当前主要生成演示数据，MemorySaver 也是进程内状态。回答时应明确原型边界，再说明如何接入真实基础设施。</div>
+                    <div class="evolution-grid">
+                        <article class="evolution-card risk"><h3>当前边界与技术债</h3><ul><li>MemorySaver 进程重启后会话丢失，不支持多实例共享。</li><li>消息裁剪函数已经定义，但尚未注册到 Agent，中长会话可能持续增长。</li><li>CLS 与 Monitor MCP 当前为演示实现，监控数据包含动态模拟逻辑。</li><li>上传接口在索引失败时仍返回成功，调用方无法准确得知知识库状态。</li><li>Milvus 维度变化会直接删除旧 Collection，缺少无损迁移。</li><li>CORS 允许任意来源，接口缺少鉴权、限流和租户隔离。</li></ul></article>
+                        <article class="evolution-card upgrade"><h3>生产化改造顺序</h3><ul><li>P0：接入真实日志/Prometheus，只读凭证和工具白名单。</li><li>P0：会话改为持久化 checkpointer，增加 TTL、用户鉴权和数据隔离。</li><li>P1：上传改异步任务，返回 task_id，支持索引进度、失败重试和回滚。</li><li>P1：增加超时、熔断、限流、全链路 deadline 与取消机制。</li><li>P1：建立离线评测集和 OpenTelemetry trace，记录 prompt、工具、token 与延迟。</li><li>P2：Collection 版本化、灰度重建与 alias 原子切换。</li></ul></article>
+                        <article class="evolution-card tradeoff"><h3>关键设计取舍</h3><ul><li>Agent 动态工具选择更灵活，但确定性和测试难度高于固定 RAG 链。</li><li>Plan-Execute-Replan 更可控，但比单轮 ReAct 产生更多 LLM 调用。</li><li>两阶段检索提升精度，但增加本地重排延迟和模型资源。</li><li>SSE 适合单向过程输出，但不适合复杂双向实时控制。</li><li>同步自动索引简单直观，但大文件会阻塞请求，应迁移到任务队列。</li><li>工具错误作为证据继续执行提高可用性，但需要防止错误被模型误解为正常数据。</li></ul></article>
+                        <article class="evolution-card metric"><h3>应该补齐的指标</h3><ul><li>检索：Recall@K、MRR、NDCG、重排增益、无结果率。</li><li>生成：事实正确率、引用命中率、无依据回答率、拒答准确率。</li><li>Agent：任务成功率、工具选择准确率、平均步骤数、replan 率、强制终止率。</li><li>性能：首 token、端到端 P50/P95、工具延迟、Milvus 延迟、并发 SSE 数。</li><li>成本：每次会话 token、每次诊断 LLM 调用数、Embedding 与重排资源。</li><li>稳定性：MCP 重试率、降级率、索引失败率、会话恢复率。</li></ul></article>
+                    </div>
+                </section>
+            </div>
+        </section>
+
+        <p class="hint">点击流程节点查看说明。快捷键：<strong>1-7</strong> 切换视图，<strong>+ / -</strong> 缩放，<strong>0</strong> 重置。</p>
+    </main>
+
+    <aside class="inspector" id="inspector" aria-live="polite">
+        <button class="inspector-close" id="inspectorClose" aria-label="关闭说明">×</button>
+        <h3 id="inspectorTitle">节点说明</h3>
+        <p id="inspectorDesc"></p>
+    </aside>
+
+    <script>
+        (() => {
+            const canvas = document.getElementById('canvas');
+            const canvasWindow = document.getElementById('canvasWindow');
+            const label = document.getElementById('zoomLabel');
+            const tabs = [...document.querySelectorAll('[data-view]')];
+            const views = [...document.querySelectorAll('.view')];
+            const inspector = document.getElementById('inspector');
+            const inspectorTitle = document.getElementById('inspectorTitle');
+            const inspectorDesc = document.getElementById('inspectorDesc');
+            const viewOrder = ['overview', 'rag', 'ingest', 'aiops', 'modules', 'questions', 'evolution'];
+            let zoom = 1;
+
+            function applyZoom(next) {
+                zoom = Math.min(1.5, Math.max(.55, next));
+                canvas.style.transform = `scale(${zoom})`;
+                canvasWindow.style.setProperty('--zoom', zoom);
+                canvasWindow.firstElementChild.style.marginBottom = `${canvas.offsetHeight * (zoom - 1)}px`;
+                canvasWindow.firstElementChild.style.marginRight = `${canvas.offsetWidth * (zoom - 1)}px`;
+                label.textContent = `${Math.round(zoom * 100)}%`;
+            }
+
+            function switchView(id) {
+                tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.view === id));
+                views.forEach(view => view.classList.toggle('active', view.id === id));
+                canvasWindow.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+                inspector.classList.remove('open');
+            }
+
+            tabs.forEach(tab => tab.addEventListener('click', () => switchView(tab.dataset.view)));
+            document.getElementById('zoomIn').addEventListener('click', () => applyZoom(zoom + .1));
+            document.getElementById('zoomOut').addEventListener('click', () => applyZoom(zoom - .1));
+            document.getElementById('resetZoom').addEventListener('click', () => applyZoom(1));
+            document.getElementById('printPage').addEventListener('click', () => window.print());
+            document.getElementById('fullscreen').addEventListener('click', async () => {
+                if (!document.fullscreenElement) await canvasWindow.requestFullscreen?.();
+                else await document.exitFullscreen?.();
+            });
+
+            document.querySelectorAll('.node[data-title]').forEach(node => {
+                node.addEventListener('click', () => {
+                    document.querySelectorAll('.node.selected').forEach(item => item.classList.remove('selected'));
+                    node.classList.add('selected');
+                    inspectorTitle.textContent = node.dataset.title;
+                    inspectorDesc.textContent = node.dataset.desc;
+                    inspector.classList.add('open');
+                });
+            });
+
+            document.getElementById('inspectorClose').addEventListener('click', () => {
+                inspector.classList.remove('open');
+                document.querySelectorAll('.node.selected').forEach(item => item.classList.remove('selected'));
+            });
+
+            const moduleSearch = document.getElementById('moduleSearch');
+            moduleSearch?.addEventListener('input', () => {
+                const keyword = moduleSearch.value.trim().toLowerCase();
+                document.querySelectorAll('.module-card').forEach(card => {
+                    card.hidden = keyword !== '' && !card.textContent.toLowerCase().includes(keyword);
+                });
+            });
+
+            document.querySelectorAll('[data-qa-filter]').forEach(button => {
+                button.addEventListener('click', () => {
+                    const category = button.dataset.qaFilter;
+                    document.querySelectorAll('.qa').forEach(item => {
+                        item.hidden = category !== 'all' && item.dataset.category !== category;
+                    });
+                });
+            });
+
+            const toggleAnswers = document.getElementById('toggleAnswers');
+            toggleAnswers?.addEventListener('click', () => {
+                const visibleItems = [...document.querySelectorAll('.qa:not([hidden])')];
+                const shouldOpen = visibleItems.some(item => !item.open);
+                visibleItems.forEach(item => { item.open = shouldOpen; });
+                toggleAnswers.textContent = shouldOpen ? '收起全部' : '展开全部';
+            });
+
+            document.addEventListener('keydown', event => {
+                if (event.target.matches('input, textarea')) return;
+                if (['1', '2', '3', '4', '5', '6', '7'].includes(event.key)) {
+                    switchView(viewOrder[Number(event.key) - 1]);
+                } else if (event.key === '+' || event.key === '=') {
+                    applyZoom(zoom + .1);
+                } else if (event.key === '-') {
+                    applyZoom(zoom - .1);
+                } else if (event.key === '0') {
+                    applyZoom(1);
+                } else if (event.key === 'Escape') {
+                    inspector.classList.remove('open');
+                }
+            });
+
+            if (window.innerWidth < 1200) applyZoom(.75);
+        })();
+    </script>
+</body>
+</html>

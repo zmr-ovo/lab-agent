@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from loguru import logger
 
 from app.config import config
-from app.tools import get_current_time, retrieve_knowledge
+from app.tools import get_current_time, retrieve_knowledge, with_optional_tavily
 from app.agent.mcp_client import get_mcp_client_with_retry
 from .state import PlanExecuteState
 from .utils import format_tools_description
@@ -50,6 +50,7 @@ replanner_prompt = ChatPromptTemplate.from_messages(
                 {tools_description}
 
                 注意：你的职责是制定或调整计划，实际的工具调用由 Executor 负责执行。
+                若涉及检索：优先依赖知识库与 MCP 已得证据；不要为了公网补充信息而拖延结束。
 
                 你有三个选择（按优先级排序）：
 
@@ -140,10 +141,12 @@ async def replanner(state: PlanExecuteState) -> Dict[str, Any]:
     # 获取可用工具列表
     try:
         # 获取本地工具
-        local_tools = [
-            get_current_time,
-            retrieve_knowledge
-        ]
+        local_tools = with_optional_tavily(
+            [
+                get_current_time,
+                retrieve_knowledge,
+            ]
+        )
 
         # 获取 MCP 工具
         mcp_client = await get_mcp_client_with_retry()
