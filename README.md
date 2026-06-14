@@ -1,6 +1,6 @@
-# SuperBizAgent
+# Lab Agent
 
-SuperBizAgent 是一个面向实验室端到端视频传输场景的智能运维与知识服务原型，集成 RAG 知识库、多轮对话、流式输出和 AIOps 分步诊断。
+Lab Agent 是一个面向实验室端到端视频传输场景的智能运维与知识服务原型，集成 RAG 知识库、多轮对话、流式输出和 AIOps 分步诊断。
 
 ## 主要能力
 
@@ -240,3 +240,60 @@ FlashRank 首次重排可能需要准备本地模型。设置 `RAG_RERANK_ENABLE
 ## License
 
 MIT License
+
+## 运行步骤
+1. 启动 Docker
+
+打开 Docker Desktop(或 colima start),等它就绪。验证:
+
+docker info   # 不报错即可
+
+2. 一键初始化(首次运行)
+
+make init
+这会:启动 Milvus/etcd/MinIO/Attu 容器 → 启动 MCP 和 FastAPI → 上传 aiops-docs/ 知识文档。
+
+3. 访问
+
+Web 主界面: http://localhost:9900
+项目流程图: http://localhost:9900/project-flow
+API 文档: http://localhost:9900/docs
+健康检查: http://localhost:9900/health
+
+日常命令
+
+make start     # 启动 MCP + FastAPI(容器已在跑时)
+make stop      # 停止应用
+make up/down   # 启停 Milvus 容器
+make check     # 检查 FastAPI 和 Milvus 状态
+make logs      # 查看日志
+
+## 启动
+1. 先启动 Docker Desktop(等右上角图标变绿/不再转圈)
+
+2. 启动项目 —— 取决于你上次是怎么关的:
+
+cd "/Users/miaoran/Documents/Program/lab agent"
+
+# 情况 A:你上次只用了 make stop(Milvus 容器还在)
+make start          # 只拉起 MCP + FastAPI,几秒就好
+
+# 情况 B:你上次用了 make down 或重启过电脑(容器没了)
+make up             # 先起 Milvus 容器(等它 healthy)
+make start          # 再起 MCP + FastAPI
+不确定是哪种就先跑 make check 看状态,或者直接两条都跑(make up 检测到容器已在跑会自动跳过)。
+
+注意:不需要再 make init 或 make upload —— 文档已经索引在 Milvus 里了,数据持久化在 volumes/。只有清空过数据卷或想重新导入文档时才需要 make upload。
+
+3. 验证
+
+make check                        # 一键检查
+# 或浏览器打开 http://localhost:9900
+关闭
+按"关多干净"分三档:
+
+make stop     # 日常用这个:停 MCP + FastAPI,Milvus 容器留着 → 下次 make start 秒开
+make down     # 连 Milvus 容器一起停(释放内存/端口)→ 下次需要 make up
+彻底关:先 make stop 再 make down,然后退出 Docker Desktop。数据都在 volumes/,不会丢。
+
+最省心的日常节奏:用 make stop 关 → 下次 make start 开。只有重启电脑(Docker 容器被关)后,才需要先补一个 make up。

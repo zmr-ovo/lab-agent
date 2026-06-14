@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed -i '' 's/SuperBizAgentApp/LabAgentApp/g' static/app.js)",
+      "Bash(sed -i '' 's/SuperBizAgent/Lab Agent/g' static/app.js Makefile .env.real.example README.md app/__init__.py app/config.py static/project-flow.html)"
+    ]
+  }
+}
