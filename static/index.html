@@ -6,7 +6,7 @@
     <title>Lab Agent</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/styles.css">
     <!-- Markdown 渲染库 -->
     <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
@@ -23,8 +23,6 @@
             </div>
             
             <div class="sidebar-content">
-                <span class="sidebar-deco sidebar-deco--star" aria-hidden="true">✦</span>
-                <span class="sidebar-deco sidebar-deco--dot" aria-hidden="true">○</span>
                 <button class="new-chat-btn" id="newChatBtn" type="button">
                     <span class="new-chat-btn__icon" aria-hidden="true">
                         <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
@@ -38,16 +36,6 @@
                     </div>
                     <div class="chat-history-list" id="chatHistoryList">
                         <!-- 历史对话列表将在这里动态生成 -->
-                    </div>
-                </div>
-                <div class="sidebar-footer" aria-hidden="true">
-                    <div class="sidebar-mascot" title="Lab Agent">
-                        <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="24" cy="24" r="20" fill="#ffe8df" stroke="#f0c9b8" stroke-width="2"/>
-                            <circle cx="17" cy="21" r="2.5" fill="#6b5c53"/>
-                            <circle cx="31" cy="21" r="2.5" fill="#6b5c53"/>
-                            <path d="M16 29c2.5 3 13.5 3 16 0" stroke="#6b5c53" stroke-width="2" stroke-linecap="round"/>
-                        </svg>
                     </div>
                 </div>
             </div>
@@ -68,24 +56,12 @@
             </button>
             <div class="chat-container">
                 <div class="welcome-greeting" id="welcomeGreeting">
-                    <div class="welcome-mascot" aria-hidden="true">
-                        <span class="kawaii-float kawaii-float--a"></span>
-                        <span class="kawaii-float kawaii-float--b"></span>
-                        <span class="kawaii-float kawaii-float--c"></span>
-                        <svg class="welcome-flask" viewBox="0 0 120 140" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <ellipse cx="60" cy="128" rx="28" ry="6" fill="#c8e6f5" opacity=".5"/>
-                            <path d="M48 18h24v8H48V18z" fill="#b8e4d0" stroke="#8bc4a8" stroke-width="2" stroke-linejoin="round"/>
-                            <path d="M42 26h36l-4 42c0 18-8 28-14 32-6-4-14-14-14-32l-4-42z" fill="#e8f8f0" stroke="#8bc4a8" stroke-width="2.5" stroke-linejoin="round"/>
-                            <path d="M52 52c4 10 12 14 16 14s12-4 16-14" stroke="#b8e4d0" stroke-width="3" stroke-linecap="round"/>
-                            <circle cx="48" cy="72" r="4" fill="#c8e6f5" opacity=".7"/>
-                            <circle cx="74" cy="88" r="3" fill="#ffd4c8" opacity=".8"/>
-                            <ellipse cx="60" cy="58" rx="10" ry="6" fill="#fff" opacity=".6"/>
-                            <circle cx="52" cy="52" r="3" fill="#6b5c53"/>
-                            <circle cx="68" cy="52" r="3" fill="#6b5c53"/>
-                            <path d="M52 62c3 4 13 4 16 0" stroke="#6b5c53" stroke-width="2" stroke-linecap="round"/>
+                    <div class="welcome-mark" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="currentColor"/>
                         </svg>
                     </div>
-                    <p class="welcome-greeting__text">你好，我是 Lab Agent</p>
+                    <p class="welcome-greeting__text">晚上好，我是 Lab Agent</p>
                 </div>
                 <div class="chat-messages" id="chatMessages">
                 </div>

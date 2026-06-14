@@ -117,9 +117,26 @@ class LabAgentApp {
         this.chatContainer = document.querySelector('.chat-container');
         this.welcomeGreeting = document.getElementById('welcomeGreeting');
         this.chatHistoryList = document.getElementById('chatHistoryList');
-        
+
+        // 按时段设置问候语
+        this.setTimeGreeting();
+
         // 初始化时检查是否需要居中
         this.checkAndSetCentered();
+    }
+
+    // 按时段设置问候语
+    setTimeGreeting() {
+        const textEl = this.welcomeGreeting?.querySelector('.welcome-greeting__text');
+        if (!textEl) return;
+        const h = new Date().getHours();
+        let greeting = '你好';
+        if (h < 5) greeting = '夜深了';
+        else if (h < 11) greeting = '早上好';
+        else if (h < 13) greeting = '中午好';
+        else if (h < 18) greeting = '下午好';
+        else greeting = '晚上好';
+        textEl.textContent = `${greeting}，我是 Lab Agent`;
     }
 
     // 绑定事件监听器

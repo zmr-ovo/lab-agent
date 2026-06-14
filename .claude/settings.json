@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(sed -i '' 's/SuperBizAgentApp/LabAgentApp/g' static/app.js)",
-      "Bash(sed -i '' 's/SuperBizAgent/Lab Agent/g' static/app.js Makefile .env.real.example README.md app/__init__.py app/config.py static/project-flow.html)"
+      "Bash(sed -i '' 's/SuperBizAgent/Lab Agent/g' static/app.js Makefile .env.real.example README.md app/__init__.py app/config.py static/project-flow.html)",
+      "Read(//tmp/**)",
+      "Read(//private/tmp/**)",
+      "Bash('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless --disable-gpu --hide-scrollbars --window-size=1280,860 --screenshot=/tmp/labagent_blue_home.png http://localhost:9900)",
+      "Bash('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless --disable-gpu --hide-scrollbars --window-size=1280,760 --screenshot=/tmp/labagent_blue_chat.png file:///tmp/labagent_preview.html)"
     ]
   }
 }
