@@ -1,13 +1,14 @@
 {
-  "include": ["app"],
+  "include": ["app", "mcp_servers", "tests"],
   "exclude": [
     "**/node_modules",
     "**/__pycache__",
     ".git",
     "logs"
   ],
-  "pythonPath": "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3",
-  "pythonVersion": "3.10",
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.13",
   "pythonPlatform": "Darwin",
   "typeCheckingMode": "basic",
   

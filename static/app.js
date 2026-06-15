@@ -1,7 +1,7 @@
 // Lab Agent 前端应用
 class LabAgentApp {
     constructor() {
-        this.apiBaseUrl = 'http://localhost:9900/api';
+        this.apiBaseUrl = '/api';
         this.currentMode = 'quick'; // 'quick' 或 'stream'
         this.sessionId = this.generateSessionId();
         this.isStreaming = false;
@@ -755,7 +755,7 @@ class LabAgentApp {
             
             // 统一响应格式：检查 data.code 或 data.message 判断请求是否成功
             if (data.code === 200 || data.message === 'success') {
-                // data.data 是 ChatResponse 对象
+                // data.data 包含回答内容和会话信息
                 const chatResponse = data.data;
                 
                 if (chatResponse && chatResponse.success) {
@@ -1427,6 +1427,87 @@ class LabAgentApp {
         }
     }
 
+    // 启动网页一键 AIOps 演示并轮询后台诊断任务
+    async sendAIOpsDemoRequest(messageElement) {
+        const response = await fetch(`${this.apiBaseUrl}/aiops/demo`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if (!response.ok) {
+            let detail = `HTTP错误: ${response.status}`;
+            try {
+                const errorBody = await response.json();
+                detail = errorBody.detail || detail;
+            } catch (_) {
+                // Keep the HTTP status when the body is not JSON.
+            }
+            throw new Error(detail);
+        }
+
+        const demo = await response.json();
+        const incidentId = demo.incident_id;
+        const startedAt = Date.now();
+        const timeoutMs = 240000;
+
+        while (Date.now() - startedAt < timeoutMs) {
+            const incidentResponse = await fetch(`${this.apiBaseUrl}/aiops/incidents/${incidentId}`);
+            if (!incidentResponse.ok) {
+                throw new Error(`读取诊断进度失败: ${incidentResponse.status}`);
+            }
+            const incident = await incidentResponse.json();
+            const events = incident.events || [];
+            const details = [];
+            const progress = [
+                '# AI Ops 一键演示',
+                '',
+                `> 事件 ID：\`${incidentId}\`  `,
+                `> 日志数据：腾讯云 CLS（真实，已写入 ${demo.uploaded_log_count} 条）  `,
+                '> 告警回调：Mock（仅模拟 CLS 推送动作）  ',
+                `> 当前状态：\`${incident.status}\``,
+                '',
+                '## 实时诊断进度'
+            ];
+
+            events.forEach((event) => {
+                if (event.type === 'plan') {
+                    progress.push('', `### 执行计划（${(event.plan || []).length} 步）`);
+                    (event.plan || []).forEach((step, index) => {
+                        progress.push(`${index + 1}. ${step}`);
+                    });
+                    details.push(event.message || '诊断计划已生成');
+                } else if (event.type === 'step_complete') {
+                    const text = event.current_step || event.message || '排查步骤完成';
+                    progress.push(`- ✅ ${text}`);
+                    details.push(text);
+                } else if (event.type === 'status') {
+                    progress.push(`- ⏳ ${event.message || event.stage}`);
+                }
+            });
+
+            if (incident.status === 'completed') {
+                const finalContent = [
+                    '# AI Ops 演示完成',
+                    '',
+                    `> 事件 ID：\`${incidentId}\`  `,
+                    `> 日志来源：\`real-tencent-cls\`  `,
+                    '> 回调类型：`Mock`（页面演示触发）  ',
+                    '> Agent：LangGraph Plan-Execute-Replan',
+                    '',
+                    incident.report || '报告已完成，但正文为空。'
+                ].join('\n');
+                this.updateAIOpsMessage(messageElement, finalContent, details);
+                return;
+            }
+            if (incident.status === 'failed') {
+                throw new Error(incident.error || 'AIOps 诊断失败');
+            }
+
+            this.updateAIOpsStreamContent(messageElement, progress.join('\n'));
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+        throw new Error('诊断超过 4 分钟仍未完成，请查看后端日志');
+    }
+
     // 更新智能运维流式内容（实时显示）
     updateAIOpsStreamContent(messageElement, content) {
         if (!messageElement) return;
@@ -1641,15 +1722,16 @@ class LabAgentApp {
         this.newChat();
         
         // 添加"分析中..."的消息（带旋转动画）
-        const loadingMessage = this.addLoadingMessage('分析中...');
+        const loadingMessage = this.addLoadingMessage('正在写入 CLS 演示日志...');
         this.currentAIOpsMessage = loadingMessage; // 保存消息引用用于后续更新
         
         // 设置发送状态
         this.isStreaming = true;
+        if (this.aiOpsSidebarBtn) this.aiOpsSidebarBtn.disabled = true;
         this.updateUI();
 
         try {
-            await this.sendAIOpsRequest(loadingMessage);
+            await this.sendAIOpsDemoRequest(loadingMessage);
         } catch (error) {
             console.error('AI Ops 分析失败:', error);
             // 更新消息为错误信息
@@ -1661,6 +1743,7 @@ class LabAgentApp {
             }
         } finally {
             this.isStreaming = false;
+            if (this.aiOpsSidebarBtn) this.aiOpsSidebarBtn.disabled = false;
             this.currentAIOpsMessage = null;
             this.updateUI();
         }

@@ -1,15 +1,15 @@
 """向量存储管理器 - 封装 Milvus VectorStore 操作"""
 
-from typing import List
+from typing import cast
 
 from langchain_core.documents import Document
 from langchain_milvus import Milvus
 from loguru import logger
+from pymilvus.orm.mutation import MutationResult
 
 from app.config import config
 from app.core.milvus_client import milvus_manager
 from app.services.vector_embedding_service import vector_embedding_service
-
 
 # 统一使用 biz collection
 COLLECTION_NAME = "biz"
@@ -22,7 +22,14 @@ class VectorStoreManager:
         """初始化向量存储管理器"""
         self.vector_store = None
         self.collection_name = COLLECTION_NAME
-        self._initialize_vector_store()
+
+    def _ensure_vector_store(self) -> Milvus:
+        """Lazily initialize Milvus so unrelated Agent/MCP imports remain available."""
+        if self.vector_store is None:
+            self._initialize_vector_store()
+        if self.vector_store is None:
+            raise RuntimeError("VectorStore 初始化失败")
+        return cast(Milvus, self.vector_store)
 
     def _initialize_vector_store(self):
         """初始化 Milvus VectorStore"""
@@ -60,7 +67,7 @@ class VectorStoreManager:
             logger.error(f"VectorStore 初始化失败: {e}")
             raise
 
-    def add_documents(self, documents: List[Document]) -> List[str]:
+    def add_documents(self, documents: list[Document]) -> list[str]:
         """
         批量添加文档到向量存储（自动批量向量化）
 
@@ -73,6 +80,7 @@ class VectorStoreManager:
         try:
             import time
             import uuid
+
             start_time = time.time()
 
             # 为每个文档生成唯一 id（因为 auto_id=False）
@@ -80,14 +88,15 @@ class VectorStoreManager:
 
             # LangChain Milvus 的 add_documents 会自动调用 embedding_function
             # 并进行批量处理，性能更好
-            result_ids = self.vector_store.add_documents(documents, ids=ids)
+            vector_store = self._ensure_vector_store()
+            result_ids = vector_store.add_documents(documents, ids=ids)
 
             elapsed = time.time() - start_time
             logger.info(
                 f"批量添加 {len(documents)} 个文档到 VectorStore 完成, "
-                f"耗时: {elapsed:.2f}秒, 平均: {elapsed/len(documents):.2f}秒/个"
+                f"耗时: {elapsed:.2f}秒, 平均: {elapsed / len(documents):.2f}秒/个"
             )
-            return result_ids
+            return cast(list[str], result_ids)
         except Exception as e:
             logger.error(f"添加文档失败: {e}")
             raise
@@ -105,17 +114,18 @@ class VectorStoreManager:
         try:
             # 使用 milvus_manager 获取已连接的 collection
             collection = milvus_manager.get_collection()
-            
+
             # metadata 是 JSON 字段，使用 JSON 路径查询语法
             # _source 是文档的来源文件路径
-            expr = f'metadata["_source"] == "{file_path}"'
-            
-            result = collection.delete(expr)
-            deleted_count = result.delete_count if hasattr(result, "delete_count") else 0
-            
+            escaped_file_path = file_path.replace("\\", "\\\\").replace('"', '\\"')
+            expr = f'metadata["_source"] == "{escaped_file_path}"'
+
+            result = cast(MutationResult, collection.delete(expr))
+            deleted_count = int(result.delete_count)
+
             logger.info(f"删除文件旧数据: {file_path}, 删除数量: {deleted_count}")
             return deleted_count
-            
+
         except Exception as e:
             logger.warning(f"删除旧数据失败 (可能是首次索引): {e}")
             return 0
@@ -127,9 +137,9 @@ class VectorStoreManager:
         Returns:
             Milvus: VectorStore 实例
         """
-        return self.vector_store
+        return self._ensure_vector_store()
 
-    def similarity_search(self, query: str, k: int = 3) -> List[Document]:
+    def similarity_search(self, query: str, k: int = 3) -> list[Document]:
         """
         相似度搜索
 
@@ -141,9 +151,9 @@ class VectorStoreManager:
             List[Document]: 相关文档列表
         """
         try:
-            docs = self.vector_store.similarity_search(query, k=k)
+            docs = self._ensure_vector_store().similarity_search(query, k=k)
             logger.debug(f"相似度搜索完成: query='{query}', 结果数={len(docs)}")
-            return docs
+            return cast(list[Document], docs)
         except Exception as e:
             logger.error(f"相似度搜索失败: {e}")
             return []

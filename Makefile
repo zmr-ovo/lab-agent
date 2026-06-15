@@ -192,14 +192,14 @@ status:
 # 启动 CLS MCP 服务
 start-cls:
 	@echo "$(YELLOW)📋 启动 CLS MCP 服务...$(NC)"
-	@if pgrep -f "mcp_servers/cls_server.py" > /dev/null 2>&1; then \
+	@if pgrep -f "mcp_servers.cls_server" > /dev/null 2>&1; then \
 		echo "$(GREEN)✅ CLS MCP 服务已经在运行中$(NC)"; \
 	else \
 		echo "$(YELLOW)📦 正在启动 CLS MCP 服务（后台运行）...$(NC)"; \
-		nohup .venv/bin/python mcp_servers/cls_server.py > mcp_cls.log 2>&1 & \
+		nohup .venv/bin/python -m mcp_servers.cls_server > mcp_cls.log 2>&1 & \
 		echo $$! > mcp_cls.pid; \
 		sleep 2; \
-		if pgrep -f "mcp_servers/cls_server.py" > /dev/null 2>&1; then \
+		if pgrep -f "mcp_servers.cls_server" > /dev/null 2>&1; then \
 			echo "$(GREEN)✅ CLS MCP 服务启动成功$(NC)"; \
 			echo "$(YELLOW)   PID: $$(cat mcp_cls.pid)$(NC)"; \
 			echo "$(YELLOW)   URL: http://127.0.0.1:8003/mcp$(NC)"; \
@@ -213,14 +213,14 @@ start-cls:
 # 启动 Monitor MCP 服务
 start-monitor:
 	@echo "$(YELLOW)📊 启动 Monitor MCP 服务...$(NC)"
-	@if pgrep -f "mcp_servers/monitor_server.py" > /dev/null 2>&1; then \
+	@if pgrep -f "mcp_servers.monitor_server" > /dev/null 2>&1; then \
 		echo "$(GREEN)✅ Monitor MCP 服务已经在运行中$(NC)"; \
 	else \
 		echo "$(YELLOW)📦 正在启动 Monitor MCP 服务（后台运行）...$(NC)"; \
-		nohup .venv/bin/python mcp_servers/monitor_server.py > mcp_monitor.log 2>&1 & \
+		nohup .venv/bin/python -m mcp_servers.monitor_server > mcp_monitor.log 2>&1 & \
 		echo $$! > mcp_monitor.pid; \
 		sleep 2; \
-		if pgrep -f "mcp_servers/monitor_server.py" > /dev/null 2>&1; then \
+		if pgrep -f "mcp_servers.monitor_server" > /dev/null 2>&1; then \
 			echo "$(GREEN)✅ Monitor MCP 服务启动成功$(NC)"; \
 			echo "$(YELLOW)   PID: $$(cat mcp_monitor.pid)$(NC)"; \
 			echo "$(YELLOW)   URL: http://127.0.0.1:8004/mcp$(NC)"; \
@@ -240,12 +240,13 @@ stop-monitor:
 			kill $$pid; \
 			echo "$(GREEN)✅ Monitor MCP 服务已停止 (PID: $$pid)$(NC)"; \
 		else \
-			echo "$(YELLOW)⚠️  进程不存在 (PID: $$pid)$(NC)"; \
+			echo "$(YELLOW)⚠️  PID 文件已过期，按进程名清理$(NC)"; \
+			pkill -f "mcp_servers.monitor_server" 2>/dev/null || true; \
 		fi; \
 		rm -f mcp_monitor.pid; \
 	else \
 		echo "$(YELLOW)⚠️  未找到 mcp_monitor.pid 文件$(NC)"; \
-		pkill -f "mcp_servers/monitor_server.py" 2>/dev/null && \
+		pkill -f "mcp_servers.monitor_server" 2>/dev/null && \
 			echo "$(GREEN)✅ 已停止所有 Monitor MCP 进程$(NC)" || \
 			echo "$(YELLOW)⚠️  没有运行中的 Monitor MCP 进程$(NC)"; \
 	fi
@@ -255,8 +256,8 @@ status-mcp:
 	@echo "$(YELLOW)📊 MCP 服务状态:$(NC)"
 	@echo ""
 	@echo "$(CYAN)CLS MCP 服务:$(NC)"
-	@if pgrep -f "mcp_servers/cls_server.py" > /dev/null 2>&1; then \
-		pid=$$(pgrep -f "mcp_servers/cls_server.py"); \
+	@if pgrep -f "mcp_servers.cls_server" > /dev/null 2>&1; then \
+		pid=$$(pgrep -f "mcp_servers.cls_server"); \
 		echo "  状态: $(GREEN)运行中$(NC)"; \
 		echo "  PID: $$pid"; \
 		echo "  URL: http://127.0.0.1:8003/mcp"; \
@@ -268,8 +269,8 @@ status-mcp:
 	fi
 	@echo ""
 	@echo "$(CYAN)Monitor MCP 服务:$(NC)"
-	@if pgrep -f "mcp_servers/monitor_server.py" > /dev/null 2>&1; then \
-		pid=$$(pgrep -f "mcp_servers/monitor_server.py"); \
+	@if pgrep -f "mcp_servers.monitor_server" > /dev/null 2>&1; then \
+		pid=$$(pgrep -f "mcp_servers.monitor_server"); \
 		echo "  状态: $(GREEN)运行中$(NC)"; \
 		echo "  PID: $$pid"; \
 		echo "  URL: http://127.0.0.1:8004/mcp"; \
@@ -345,12 +346,13 @@ stop-cls:
 			kill $$pid; \
 			echo "$(GREEN)✅ CLS MCP 服务已停止 (PID: $$pid)$(NC)"; \
 		else \
-			echo "$(YELLOW)⚠️  进程不存在 (PID: $$pid)$(NC)"; \
+			echo "$(YELLOW)⚠️  PID 文件已过期，按进程名清理$(NC)"; \
+			pkill -f "mcp_servers.cls_server" 2>/dev/null || true; \
 		fi; \
 		rm -f mcp_cls.pid; \
 	else \
 		echo "$(YELLOW)⚠️  未找到 mcp_cls.pid 文件$(NC)"; \
-		pkill -f "mcp_servers/cls_server.py" 2>/dev/null && \
+		pkill -f "mcp_servers.cls_server" 2>/dev/null && \
 			echo "$(GREEN)✅ 已停止所有 CLS MCP 进程$(NC)" || \
 			echo "$(YELLOW)⚠️  没有运行中的 CLS MCP 进程$(NC)"; \
 	fi
@@ -364,7 +366,8 @@ stop-api:
 			kill $$pid; \
 			echo "$(GREEN)✅ FastAPI 服务已停止 (PID: $$pid)$(NC)"; \
 		else \
-			echo "$(YELLOW)⚠️  进程不存在 (PID: $$pid)$(NC)"; \
+			echo "$(YELLOW)⚠️  PID 文件已过期，按进程名清理$(NC)"; \
+			pkill -f "uvicorn app.main:app" 2>/dev/null || true; \
 		fi; \
 		rm -f server.pid; \
 	else \

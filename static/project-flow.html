@@ -1030,12 +1030,12 @@
                         </article>
 
                         <article class="module-card">
-                            <header><h3>模型适配与代码演进痕迹</h3><span class="module-path">app/core/llm_factory.py · vector_search_service.py</span></header>
+                            <header><h3>统一模型与检索主链</h3><span class="module-path">rag_agent_service.py · vector_store_manager.py</span></header>
                             <div class="module-body">
-                                <div class="fact"><b>LLM</b><span>LLMFactory 提供 OpenAI-compatible ChatOpenAI 适配，但当前 RAG/AIOps 主链直接使用 langchain_qwq.ChatQwen。</span></div>
-                                <div class="fact"><b>检索</b><span>VectorSearchService 提供底层 pymilvus L2 搜索；当前知识工具主链使用 langchain_milvus VectorStore + FlashRank。</span></div>
-                                <div class="fact"><b>判断</b><span>这反映了项目迭代后的两套路径，不应把它们描述成同一请求同时执行。</span></div>
-                                <div class="fact answer"><b>重构</b><span>统一模型工厂和 Retriever 接口，删除或标记 legacy 实现，避免参数、指标类型和异常语义分叉。</span></div>
+                                <div class="fact"><b>LLM</b><span>RAG 与 AIOps 统一使用 ChatQwen，直接支持结构化输出、工具调用和流式响应。</span></div>
+                                <div class="fact"><b>检索</b><span>知识检索统一使用 langchain_milvus VectorStore 宽召回，再由 FlashRank 重排。</span></div>
+                                <div class="fact"><b>边界</b><span>MilvusClient 负责连接和 Collection 生命周期，VectorStoreManager 负责 LangChain 检索接口。</span></div>
+                                <div class="fact answer"><b>收益</b><span>删除未使用的模型工厂和底层 L2 搜索旧路径，避免参数、距离语义和异常处理分叉。</span></div>
                             </div>
                         </article>
                     </div>
@@ -1093,16 +1093,16 @@
 
                             <details class="qa" data-category="engineering"><summary>18. 如果并发量上来，瓶颈在哪里？怎么优化？</summary><div class="qa-answer"><p class="speak">瓶颈主要是外部 LLM/Embedding 调用、FlashRank CPU、Milvus 检索和长连接数量。可以把上传索引改为队列异步任务；Embedding 批处理与缓存；FlashRank 做进程池或独立服务；限制每用户并发与 Agent 步数；SSE 服务水平扩展；会话 checkpoint 外置；工具调用设置超时、限流和熔断。</p></div></details>
 
-                            <details class="qa" data-category="architecture"><summary>19. 为什么代码里既有 LLMFactory，又直接使用 ChatQwen？</summary><div class="qa-answer"><p class="speak">这是项目演进留下的两种适配方式。LLMFactory 基于 ChatOpenAI，便于切换任何 OpenAI-compatible 提供商；当前 Agent 主链使用 langchain_qwq.ChatQwen，是为了更直接适配通义工具调用和流式行为。面试时我会如实说明当前没有完全统一，下一步应让 Agent 依赖抽象模型工厂，并针对结构化输出、工具调用和流式能力做 provider capability 配置。</p></div></details>
+                            <details class="qa" data-category="architecture"><summary>19. 为什么统一使用 ChatQwen？</summary><div class="qa-answer"><p class="speak">当前 RAG 与 AIOps 都依赖通义模型的结构化输出、工具调用和流式能力。统一模型客户端可以减少两套参数、回调和异常语义；未来需要多供应商时，再基于明确的能力接口扩展。</p></div></details>
 
-                            <details class="qa" data-category="rag"><summary>20. 为什么仓库里有两套向量搜索实现？</summary><div class="qa-answer"><p class="speak">VectorSearchService 是较底层的 pymilvus 搜索路径，直接生成 query vector 并用 L2 检索；当前 RAG 主链已经演进为 VectorStoreManager，通过 langchain_milvus Retriever 宽召回，再接 FlashRank 重排。两者不是同时运行。工程上应该保留统一 Retriever 抽象后删除 legacy 路径，避免搜索参数和距离语义不一致。</p></div></details>
+                            <details class="qa" data-category="rag"><summary>20. 当前向量检索链路是什么？</summary><div class="qa-answer"><p class="speak">查询先由 DashScope Embedding 向量化，通过 langchain_milvus Retriever 在 Milvus 宽召回，再用 FlashRank 本地重排并截取 top-k。项目只保留这一条检索主链。</p></div></details>
                         </div>
                     </div>
                 </section>
 
                 <section class="view knowledge-view" id="evolution">
                     <div class="section-heading"><div><h2>项目边界、风险与生产化演进</h2><p>面试中主动区分“当前已实现”和“下一步设计”，可信度通常比堆砌技术名词更重要。</p></div></div>
-                    <div class="truth-banner"><strong>当前定位：</strong>这是一个完整可演示的智能运维原型，核心工作流、RAG、MCP、SSE 已经打通；日志和监控 MCP 当前主要生成演示数据，MemorySaver 也是进程内状态。回答时应明确原型边界，再说明如何接入真实基础设施。</div>
+                    <div class="truth-banner"><strong>当前定位：</strong>这是一个完整可演示的智能运维原型，核心工作流、RAG、MCP、SSE 已经打通；CLS、TMP 和 Alertmanager 支持真实与显式 Mock 双模式，MemorySaver 仍是进程内状态。</div>
                     <div class="evolution-grid">
                         <article class="evolution-card risk"><h3>当前边界与技术债</h3><ul><li>MemorySaver 进程重启后会话丢失，不支持多实例共享。</li><li>消息裁剪函数已经定义，但尚未注册到 Agent，中长会话可能持续增长。</li><li>CLS 与 Monitor MCP 当前为演示实现，监控数据包含动态模拟逻辑。</li><li>上传接口在索引失败时仍返回成功，调用方无法准确得知知识库状态。</li><li>Milvus 维度变化会直接删除旧 Collection，缺少无损迁移。</li><li>CORS 允许任意来源，接口缺少鉴权、限流和租户隔离。</li></ul></article>
                         <article class="evolution-card upgrade"><h3>生产化改造顺序</h3><ul><li>P0：接入真实日志/Prometheus，只读凭证和工具白名单。</li><li>P0：会话改为持久化 checkpointer，增加 TTL、用户鉴权和数据隔离。</li><li>P1：上传改异步任务，返回 task_id，支持索引进度、失败重试和回滚。</li><li>P1：增加超时、熔断、限流、全链路 deadline 与取消机制。</li><li>P1：建立离线评测集和 OpenTelemetry trace，记录 prompt、工具、token 与延迟。</li><li>P2：Collection 版本化、灰度重建与 alias 原子切换。</li></ul></article>

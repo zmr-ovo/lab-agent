@@ -4,22 +4,25 @@ Planner 节点：制定执行计划
 """
 
 from textwrap import dedent
-from typing import Dict, Any, List
+from typing import Any
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_qwq import ChatQwen
-from pydantic import BaseModel, Field
 from loguru import logger
+from pydantic import BaseModel, Field, SecretStr
 
+from app.agent.mcp_client import get_mcp_client_with_retry
 from app.config import config
 from app.tools import get_current_time, retrieve_knowledge, with_optional_tavily
-from app.agent.mcp_client import get_mcp_client_with_retry
+
 from .state import PlanExecuteState
 from .utils import format_tools_description
 
 
 class Plan(BaseModel):
     """计划的输出格式"""
-    steps: List[str] = Field(
+
+    steps: list[str] = Field(
         description="完成任务所需的不同步骤。这些步骤应该按顺序执行，每一步都建立在前一步的基础上。"
     )
 
@@ -41,6 +44,7 @@ planner_prompt = ChatPromptTemplate.from_messages(
                 {experience_context}
 
                 对于给定的任务，请创建一个简单的、逐步的计划来完成它。计划应该：
+                - 总步骤控制在 4 到 6 步
                 - 将任务分解为逻辑上独立的步骤
                 - 每个步骤应该明确使用哪些工具(如果需要工具的话)来获取信息, 最好能同时提供工具执行所需要的参数
                 - 步骤之间应该有清晰的依赖关系
@@ -48,6 +52,8 @@ planner_prompt = ChatPromptTemplate.from_messages(
                 - **如果有相关经验文档，请参考其中的方法和步骤制定计划**
                 - **优先安排知识库检索**获取内部经验；仅当内部知识明显不足且需要外部时效资讯时，
                   再在计划中安排联网搜索（Tavily）；运维诊断仍以监控/日志等 MCP 工具为主。
+                - 输入中的告警上下文已经由 API 或 Alertmanager 获取，不要再次调用 get_active_alerts
+                - 服务资源映射可直接解析 Topic 和 PromQL 时，不要增加无必要的 Topic 发现步骤
 
                 示例输入："分析当前系统的性能问题"
                 示例输出（假设有对应工具）：
@@ -62,7 +68,7 @@ planner_prompt = ChatPromptTemplate.from_messages(
 )
 
 
-async def planner(state: PlanExecuteState) -> Dict[str, Any]:
+async def planner(state: PlanExecuteState) -> dict[str, Any]:
     """
     规划节点：根据用户输入生成执行计划
 
@@ -73,6 +79,7 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
     logger.info("=== Planner：制定执行计划 ===")
 
     input_text = state.get("input", "")
+    alerts = state.get("alerts", [])
     logger.info(f"用户输入: {input_text}")
 
     try:
@@ -128,25 +135,31 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
         # 步骤4: 创建 LLM 并生成计划
         llm = ChatQwen(
             model=config.rag_model,
-            api_key=config.dashscope_api_key,
-            temperature=0
+            api_key=SecretStr(config.dashscope_api_key),
+            temperature=0,
         )
 
         planner_chain = planner_prompt | llm.with_structured_output(Plan)
 
         # 调用 LLM 生成计划
-        plan_result = await planner_chain.ainvoke({
-            "messages": [("user", input_text)],
-            "tools_description": tools_description,
-            "experience_context": experience_context
-        })
+        plan_result = await planner_chain.ainvoke(
+            {
+                "messages": [
+                    ("user", input_text),
+                    ("user", f"告警上下文: {alerts}"),
+                    ("user", f"数据模式: {state.get('data_mode', 'unknown')}"),
+                ],
+                "tools_description": tools_description,
+                "experience_context": experience_context,
+            }
+        )
 
         # 提取步骤列表
         if isinstance(plan_result, Plan):
             plan_steps = plan_result.steps
         else:
             # 如果返回的是字典，提取 steps 字段
-            plan_steps = plan_result.get("steps", [])  # type: ignore
+            plan_steps = plan_result.get("steps", [])
 
         logger.info(f"计划已生成，共 {len(plan_steps)} 个步骤")
         for i, step in enumerate(plan_steps, 1):
@@ -159,8 +172,9 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
         # 返回一个默认计划
         return {
             "plan": [
-                "收集相关信息",
-                "分析数据",
-                "生成报告"
+                "使用 retrieve_knowledge 检索与告警症状相关的内部排障经验",
+                "使用 query_service_metric 查询目标服务的关键 TMP 指标趋势",
+                "使用 search_service_logs 查询告警时间窗内的 CLS 错误日志",
+                "综合告警、指标、日志和知识库证据生成诊断报告",
             ]
         }

@@ -1,0 +1,29 @@
+version: 1
+defaults:
+  cls_query: '*'
+  prometheus_labels:
+    service: service
+  metrics:
+    cpu: '100 * sum(rate(container_cpu_usage_seconds_total{service="$service"}[5m])) by (service)'
+    memory: '100 * sum(container_memory_working_set_bytes{service="$service"}) by (service) / sum(container_spec_memory_limit_bytes{service="$service"}) by (service)'
+    availability: 'max(up{service="$service"})'
+    error_rate: 'sum(rate(http_requests_total{service="$service",status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total{service="$service"}[5m])), 0.001)'
+    latency_p95: 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="$service"}[5m])) by (le))'
+
+services:
+  lab-agent:
+    aliases: [lab-agent-local-test, local-lab-agent]
+    cls_topic_id: ""
+    cls_query: 'service:"lab-agent"'
+  video-gateway:
+    aliases: [video-gateway-service, gateway]
+    cls_topic_id: ""
+    cls_query: 'service:"video-gateway"'
+  media-relay:
+    aliases: [media-relay-service, relay]
+    cls_topic_id: ""
+    cls_query: 'service:"media-relay"'
+  data-sync-service:
+    aliases: [data-sync, sync]
+    cls_topic_id: ""
+    cls_query: 'service:"data-sync-service"'

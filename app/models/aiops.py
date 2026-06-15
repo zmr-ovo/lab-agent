@@ -1,58 +1,43 @@
-"""
-AIOps 请求和响应模型
-"""
+"""AIOps request and response models."""
 
-from typing import Optional, List, Dict, Any
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
-class AIOpsRequest(BaseModel):
-    """AIOps 诊断请求"""
-    
-    session_id: Optional[str] = Field(
-        default="default",
-        description="会话ID，用于追踪诊断历史"
-    )
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "session_id": "session-123"
-            }
-        }
-
-
 class AlertInfo(BaseModel):
-    """告警信息"""
-    alertname: str
-    severity: str
-    instance: str
-    duration: str
-    description: Optional[str] = None
+    """Alertmanager-compatible alert payload."""
+
+    status: str = "firing"
+    labels: dict[str, str] = Field(default_factory=dict)
+    annotations: dict[str, str] = Field(default_factory=dict)
+    starts_at: datetime | None = Field(default=None, alias="startsAt")
+    ends_at: datetime | None = Field(default=None, alias="endsAt")
+    generator_url: str | None = Field(default=None, alias="generatorURL")
+    fingerprint: str | None = None
+
+    model_config = {"populate_by_name": True, "extra": "allow"}
 
 
-class DiagnosisResponse(BaseModel):
-    """诊断响应（非流式）"""
-    
-    code: int = 200
-    message: str = "success"
-    data: Dict[str, Any]
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "code": 200,
-                "message": "success",
-                "data": {
-                    "status": "completed",
-                    "target_alert": {
-                        "alertname": "HighCPUUsage",
-                        "severity": "critical"
-                    },
-                    "diagnosis": {
-                        "root_cause": "数据库连接池耗尽",
-                        "recommendations": ["扩容数据库连接池", "优化SQL查询"]
-                    }
-                }
-            }
-        }
+class AIOpsRequest(BaseModel):
+    """AIOps diagnosis request."""
+
+    session_id: str | None = Field(default="default", description="会话ID，用于追踪诊断历史")
+    alert: AlertInfo | None = Field(
+        default=None,
+        description="单个告警；存在时优先于主动拉取 Alertmanager",
+    )
+    alerts: list[AlertInfo] = Field(
+        default_factory=list,
+        description="Alertmanager 兼容的告警数组",
+    )
+    lookback_minutes: int = Field(
+        default=60,
+        ge=5,
+        le=1440,
+        description="日志和指标默认回看时间",
+    )
+
+    model_config = {
+        "json_schema_extra": {"example": {"session_id": "session-123", "lookback_minutes": 60}}
+    }

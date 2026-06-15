@@ -1,470 +1,318 @@
-"""腾讯云 CLS (Cloud Log Service) MCP Server
+"""Tencent Cloud CLS MCP server with explicit real/mock modes."""
 
-本地实现的 CLS 日志服务 MCP Server，提供日志查询、检索和分析功能。
-"""
+from __future__ import annotations
 
-import logging
-import functools
+import hashlib
+import hmac
 import json
-from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
+import logging
+import re
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Any, cast
+
+import httpx
 from fastmcp import FastMCP
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+from app.config import config
+from mcp_servers.aiops_common import parse_time, resolve_service, result
+
 logger = logging.getLogger("CLS_MCP_Server")
-
 mcp = FastMCP("CLS")
+_UTC = timezone.utc  # noqa: UP017 - compatible with editors still using Python 3.10 stubs
+_STATUS_CODE_PATTERN = re.compile(r"(?<!\d)[1-5]\d{2}(?!\d)")
 
 
-def log_tool_call(func):
-    """装饰器：记录工具调用的日志，包括方法名、参数和返回状态"""
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        method_name = func.__name__
-
-        # 记录调用信息
-        logger.info(f"=" * 80)
-        logger.info(f"调用方法: {method_name}")
-
-        # 记录参数（排除self等）
-        if kwargs:
-            # 使用 json.dumps 格式化参数，处理可能的序列化错误
-            try:
-                params_str = json.dumps(kwargs, ensure_ascii=False, indent=2)
-            except (TypeError, ValueError):
-                params_str = str(kwargs)
-            logger.info(f"参数信息:\n{params_str}")
-        else:
-            logger.info("参数信息: 无")
-
-        # 执行方法
-        try:
-            result = func(*args, **kwargs)
-
-            # 记录返回状态
-            logger.info(f"返回状态: SUCCESS")
-
-            # 记录返回结果摘要（避免日志过长）
-            if isinstance(result, dict):
-                summary = {k: v if not isinstance(v, (list, dict)) else f"<{type(v).__name__} with {len(v)} items>"
-                          for k, v in list(result.items())[:5]}
-                logger.info(f"返回结果摘要: {json.dumps(summary, ensure_ascii=False)}")
-            else:
-                logger.info(f"返回结果: {result}")
-
-            logger.info(f"=" * 80)
-            return result
-
-        except Exception as e:
-            # 记录错误状态
-            logger.error(f"返回状态: ERROR")
-            logger.error(f"错误信息: {str(e)}")
-            logger.error(f"=" * 80)
-            raise
-
-    return wrapper
+def _sign(key: bytes, message: str) -> bytes:
+    return hmac.new(key, message.encode("utf-8"), hashlib.sha256).digest()
 
 
-def parse_time_or_default(time_str: Optional[str], default_offset_hours: int = 0) -> datetime:
-    """解析时间字符串或返回默认时间。
-
-    Args:
-        time_str: 时间字符串（格式：YYYY-MM-DD HH:MM:SS）
-        default_offset_hours: 默认时间偏移（小时）
-
-    Returns:
-        datetime: 解析后的时间对象
-    """
-    if time_str:
-        try:
-            return datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            pass
-    return datetime.now() + timedelta(hours=default_offset_hours)
+def _cls_endpoint() -> str:
+    host = str(config.tencentcloud_api_base_host).strip()
+    if host.startswith("http://") or host.startswith("https://"):
+        return host.rstrip("/")
+    if not host.startswith("cls."):
+        host = f"cls.{host}"
+    return f"https://{host}"
 
 
-def generate_time_series(base_time: datetime, minutes_offset: int) -> str:
-    """生成基于基准时间的时间字符串。
+async def _call_cls(action: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if not config.tencentcloud_secret_id or not config.tencentcloud_secret_key:
+        raise RuntimeError("TENCENTCLOUD_SECRET_ID/SECRET_KEY 未配置")
 
-    Args:
-        base_time: 基准时间
-        minutes_offset: 分钟偏移量
-
-    Returns:
-        str: 格式化的时间字符串
-    """
-    result_time = base_time + timedelta(minutes=minutes_offset)
-    return result_time.strftime("%Y-%m-%d %H:%M:%S")
-
-
-@mcp.tool()
-@log_tool_call
-def get_current_timestamp() -> int:
-    """获取当前时间戳（以毫秒为单位）。
-    
-    此工具用于获取标准的毫秒时间戳，可用于：
-    1. 作为 search_log 的 end_time 参数（查询到现在）
-    2. 计算历史时间点作为 start_time 参数
-    
-    Returns:
-        int: 当前时间戳（毫秒），例如: 1708012345000
-    
-    使用示例:
-        # 获取当前时间
-        current = get_current_timestamp()
-        
-        # 计算15分钟前的时间
-        fifteen_min_ago = current - (15 * 60 * 1000)
-        
-        # 计算1小时前的时间
-        one_hour_ago = current - (60 * 60 * 1000)
-        
-        # 用于搜索最近15分钟的日志
-        search_log(
-            topic_id="topic-001",
-            start_time=fifteen_min_ago,
-            end_time=current
-        )
-    """
-    return int(datetime.now().timestamp() * 1000)
-
-
-@mcp.tool()
-@log_tool_call
-def get_region_code_by_name(region_name: str) -> Dict[str, Any]:
-    """根据地区名称搜索对应的地区参数。
-
-    Args:
-        region_name: 地区名称（如：北京、上海、广州等）
-
-    Returns:
-        Dict: 包含地区代码和相关信息的字典
-            - region_code: 地区代码
-            - region_name: 地区名称
-            - available: 是否可用
-    """
-    # 模拟地区映射表（实际应该从配置或数据库读取）
-    region_mapping = {
-        "北京": {"region_code": "ap-beijing", "region_name": "北京", "available": True},
-        "上海": {"region_code": "ap-shanghai", "region_name": "上海", "available": True},
-        "广州": {"region_code": "ap-guangzhou", "region_name": "广州", "available": True},
+    service = "cls"
+    host = _cls_endpoint().split("://", 1)[1]
+    timestamp = int(time.time())
+    date = datetime.fromtimestamp(timestamp, tz=_UTC).strftime("%Y-%m-%d")
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    canonical_headers = f"content-type:application/json; charset=utf-8\nhost:{host}\n"
+    signed_headers = "content-type;host"
+    canonical_request = "\n".join(
+        [
+            "POST",
+            "/",
+            "",
+            canonical_headers,
+            signed_headers,
+            hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        ]
+    )
+    credential_scope = f"{date}/{service}/tc3_request"
+    string_to_sign = "\n".join(
+        [
+            "TC3-HMAC-SHA256",
+            str(timestamp),
+            credential_scope,
+            hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+        ]
+    )
+    secret_date = _sign(("TC3" + config.tencentcloud_secret_key).encode("utf-8"), date)
+    secret_service = _sign(secret_date, service)
+    secret_signing = _sign(secret_service, "tc3_request")
+    signature = hmac.new(secret_signing, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    authorization = (
+        "TC3-HMAC-SHA256 "
+        f"Credential={config.tencentcloud_secret_id}/{credential_scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    )
+    headers = {
+        "Authorization": authorization,
+        "Content-Type": "application/json; charset=utf-8",
+        "Host": host,
+        "X-TC-Action": action,
+        "X-TC-Timestamp": str(timestamp),
+        "X-TC-Version": "2020-10-16",
+        "X-TC-Region": config.tencentcloud_region,
     }
+    async with httpx.AsyncClient(
+        timeout=config.aiops_http_timeout_seconds,
+        verify=config.aiops_verify_tls,
+    ) as client:
+        response = await client.post(_cls_endpoint(), headers=headers, content=body)
+        response.raise_for_status()
+        response_payload = cast(dict[str, Any], response.json())
+        data = cast(dict[str, Any], response_payload.get("Response", {}))
+    if data.get("Error"):
+        error = data["Error"]
+        raise RuntimeError(f"{error.get('Code')}: {error.get('Message')}")
+    return data
 
-    result = region_mapping.get(region_name)
-    if result:
-        return result
-    else:
-        return {
-            "region_code": None,
-            "region_name": region_name,
-            "available": False,
-            "error": f"未找到地区: {region_name}"
-        }
 
-
-@mcp.tool()
-@log_tool_call
-def get_topic_info_by_name(topic_name: str, region_code: Optional[str] = None) -> Dict[str, Any]:
-    """根据主题名称搜索相关的主题信息。
-
-    Args:
-        topic_name: 主题名称
-        region_code: 地区代码（可选）
-
-    Returns:
-        Dict: 包含主题信息的字典
-            - topic_id: 主题ID
-            - topic_name: 主题名称
-            - region_code: 所属地区
-            - create_time: 创建时间
-            - log_count: 日志数量
-    """
-    mock_topics = [
+def _mock_topics() -> list[dict[str, Any]]:
+    return [
         {
-            "topic_id": "topic-001",
-            "topic_name": "数据同步服务日志",
-            "service_name": "data-sync-service",
-            "region_code": "ap-beijing",
-            "create_time": "2024-01-01 10:00:00",
-            "log_count": 0,
-            "description": "服务应用日志"
-        }
+            "topic_id": "mock-video-gateway-topic",
+            "topic_name": "video-gateway",
+            "service_name": "video-gateway",
+            "region": config.tencentcloud_region,
+        },
+        {
+            "topic_id": "mock-media-relay-topic",
+            "topic_name": "media-relay",
+            "service_name": "media-relay",
+            "region": config.tencentcloud_region,
+        },
     ]
 
-    # 根据名称和地区筛选
-    for topic in mock_topics:
-        if topic["topic_name"] == topic_name:
-            if region_code is None or topic["region_code"] == region_code:
-                return topic
 
-    return {
-        "topic_id": None,
-        "topic_name": topic_name,
-        "region_code": region_code,
-        "error": f"未找到主题: {topic_name}"
-    }
-
-
-@mcp.tool()
-@log_tool_call
-def search_topic_by_service_name(
-    service_name: str,
-    region_code: Optional[str] = None,
-    fuzzy: bool = True
-) -> Dict[str, Any]:
-    """根据服务名称搜索相关的日志主题信息，支持模糊搜索。
-    
-    此工具用于根据服务名称查找对应的日志主题（topic），便于后续进行日志查询。
-    
-    Args:
-        service_name: 服务名称（必填）
-            示例: "data-sync-service", "sync", "data-sync"
-            说明: 当 fuzzy=True 时，支持部分匹配
-        
-        region_code: 地区代码（可选）
-            示例: "ap-beijing", "ap-shanghai"
-            说明: 如果指定，只返回该地区的主题
-        
-        fuzzy: 是否启用模糊搜索（可选，默认 True）
-            True: 部分匹配，例如 "sync" 可以匹配 "data-sync-service"
-            False: 精确匹配，必须完全一致
-    
-    Returns:
-        Dict: 搜索结果
-            - total: 匹配到的主题数量
-            - topics: 主题列表，每个主题包含:
-                * topic_id: 主题ID（用于后续日志查询）
-                * topic_name: 主题名称
-                * service_name: 服务名称
-                * region_code: 所属地区
-                * create_time: 创建时间
-                * log_count: 日志数量
-                * description: 主题描述
-            - query: 查询条件
-    
-    使用示例:
-        # 示例1: 模糊搜索（推荐）
-        search_topic_by_service_name(service_name="data-sync")
-        # 可以匹配: "data-sync-service", "data-sync-worker" 等
-        
-        # 示例2: 精确搜索
-        search_topic_by_service_name(
-            service_name="data-sync-service",
-            fuzzy=False
-        )
-        
-        # 示例3: 指定地区搜索
-        search_topic_by_service_name(
-            service_name="sync",
-            region_code="ap-beijing"
-        )
-        
-        # 示例4: 查找后进行日志搜索的完整流程
-        # 步骤1: 根据服务名查找 topic
-        result = search_topic_by_service_name(service_name="data-sync-service")
-        
-        # 步骤2: 获取 topic_id
-        topic_id = result["topics"][0]["topic_id"]  # "topic-001"
-        
-        # 步骤3: 使用 topic_id 查询日志
-        current_ts = get_current_timestamp()
-        start_ts = current_ts - (15 * 60 * 1000)
-        search_log(
-            topic_id=topic_id,
-            start_time=start_ts,
-            end_time=current_ts
-        )
-    """
-    # Mock 主题数据（实际应该从配置或数据库读取）
-    mock_topics = [
-        {
-            "topic_id": "topic-001",
-            "topic_name": "数据同步服务日志",
-            "service_name": "data-sync-service",
-            "region_code": "ap-beijing",
-            "create_time": "2024-01-01 10:00:00",
-            "log_count": 0,
-            "description": "数据同步服务的应用日志，包含同步任务执行情况"
-        },
-        {
-            "topic_id": "topic-002",
-            "topic_name": "数据同步服务错误日志",
-            "service_name": "data-sync-service",
-            "region_code": "ap-beijing",
-            "create_time": "2024-01-01 10:00:00",
-            "log_count": 0,
-            "description": "数据同步服务的错误日志"
-        },
-        {
-            "topic_id": "topic-003",
-            "topic_name": "API网关服务日志",
-            "service_name": "api-gateway-service",
-            "region_code": "ap-shanghai",
-            "create_time": "2024-01-01 10:00:00",
-            "log_count": 0,
-            "description": "API网关服务日志"
-        }
+def _mock_logs(service_name: str, start: datetime, limit: int) -> list[dict[str, Any]]:
+    service = resolve_service(service_name)["name"]
+    samples = [
+        ("INFO", "health check passed"),
+        ("WARN", "upstream response latency increased to 1840ms"),
+        ("ERROR", "upstream connection timeout after 3000ms"),
+        ("ERROR", "request failed: no healthy upstream endpoints"),
     ]
-    
-    matched_topics = []
-    
-    # 搜索逻辑
-    for topic in mock_topics:
-        # 地区筛选
-        if region_code and topic["region_code"] != region_code:
-            continue
-        
-        # 服务名称匹配
-        topic_service_name = topic.get("service_name", "")
-        
-        if fuzzy:
-            # 模糊匹配：服务名包含查询字符串，或查询字符串包含服务名
-            if (service_name.lower() in topic_service_name.lower() or 
-                topic_service_name.lower() in service_name.lower()):
-                matched_topics.append(topic)
-        else:
-            # 精确匹配
-            if topic_service_name == service_name:
-                matched_topics.append(topic)
-    
-    return {
-        "total": len(matched_topics),
-        "topics": matched_topics,
-        "query": {
-            "service_name": service_name,
-            "region_code": region_code,
-            "fuzzy": fuzzy
-        },
-        "message": f"找到 {len(matched_topics)} 个匹配的日志主题" if matched_topics else f"未找到服务 '{service_name}' 的日志主题"
-    }
-
-
-@mcp.tool()
-@log_tool_call
-def search_log(
-    topic_id: str,
-    start_time: int,
-    end_time: int,
-    query: Optional[str] = None,
-    limit: int = 100
-) -> Dict[str, Any]:
-    """基于提供的查询参数搜索日志。
-
-    Args:
-        topic_id: 主题ID（必填）
-            示例: "topic-001"
-        
-        start_time: 开始时间戳，单位为毫秒（必填，int类型）
-            重要: 必须传递整数类型的毫秒时间戳
-            获取方式: 
-            1. 使用 get_current_timestamp() 工具获取当前时间戳
-            2. 计算历史时间: current_timestamp - (分钟数 * 60 * 1000)
-            示例: 
-            - 当前时间: 1708012345000
-            - 15分钟前: 1708012345000 - (15 * 60 * 1000) = 1708011445000
-            - 1小时前: 1708012345000 - (60 * 60 * 1000) = 1708008745000
-        
-        end_time: 结束时间戳，单位为毫秒（必填，int类型）
-            重要: 必须传递整数类型的毫秒时间戳
-            通常使用 get_current_timestamp() 工具获取当前时间作为结束时间
-            示例: 1708012345000
-        
-        query: 查询语句（可选，CLS 查询语法）
-            示例: "level:ERROR" 或 "message:异常"
-        
-        limit: 返回结果数量限制（默认100，可选）
-
-    Returns:
-        Dict: 搜索结果
-            - topic_id: 主题ID
-            - start_time: 开始时间戳
-            - end_time: 结束时间戳
-            - query: 查询语句
-            - limit: 结果限制
-            - total: 实际返回的日志条数
-            - logs: 日志列表，每条日志包含:
-                * timestamp: 日志时间（格式: YYYY-MM-DD HH:MM:SS）
-                * level: 日志级别
-                * message: 日志内容
-            - took_ms: 查询耗时（毫秒）
-            - message: 查询状态消息
-    
-    使用示例:
-        # 步骤1: 获取当前时间戳
-        current_ts = get_current_timestamp()  # 返回: 1708012345000
-        
-        # 步骤2: 计算开始时间（15分钟前）
-        start_ts = current_ts - (15 * 60 * 1000)  # 1708011445000
-        
-        # 步骤3: 搜索日志
-        search_log(
-            topic_id="topic-001",
-            start_time=start_ts,     # int类型: 1708011445000
-            end_time=current_ts,     # int类型: 1708012345000
-            limit=100
-        )
-    """
-    # 根据 topic_id 返回不同的结果
-    if topic_id == "topic-001":
-        # topic-001: 应用日志，动态生成 INFO 日志
-        logs = []
-        current_time_ms = start_time
-        count = 0
-
-        # 计算最大可生成的日志条数（基于时间范围）
-        max_logs_by_time = int((end_time - start_time) / (60 * 1000)) + 1
-
-        # 实际生成的日志数量取 limit 和时间范围内最大日志数的较小值
-        actual_limit = min(limit, max_logs_by_time)
-
-        while current_time_ms <= end_time and count < actual_limit:
-            # 将毫秒时间戳转换为可读格式
-            log_time = datetime.fromtimestamp(current_time_ms / 1000)
-            time_str = log_time.strftime("%Y-%m-%d %H:%M:%S")
-
-            log_entry = {
-                "timestamp": time_str,
-                "level": "INFO",
-                "message": "正在同步元数据……"
+    logs = []
+    for index, (level, message) in enumerate(samples[:limit]):
+        timestamp = start.timestamp() + index * 60
+        logs.append(
+            {
+                "timestamp": datetime.fromtimestamp(timestamp, tz=_UTC).isoformat(),
+                "level": level,
+                "service": service,
+                "message": message,
             }
+        )
+    return logs
 
-            logs.append(log_entry)
-            count += 1
 
-            # 下一条日志时间增加1分钟（60秒 * 1000毫秒）
-            current_time_ms += 60 * 1000
+async def list_log_topics_impl(name_keyword: str | None = None, limit: int = 50) -> dict[str, Any]:
+    limit = max(1, min(limit, 200))
+    if config.aiops_data_mode == "mock":
+        topics = _mock_topics()
+        if name_keyword:
+            keyword = name_keyword.lower()
+            topics = [item for item in topics if keyword in item["topic_name"].lower()]
+        return result("tencent-cloud-cls", topics[:limit], query={"name_keyword": name_keyword})
+    try:
+        payload: dict[str, Any] = {"Limit": limit, "Offset": 0}
+        if name_keyword:
+            payload["Filters"] = [{"Key": "topicName", "Values": [name_keyword]}]
+        response = await _call_cls("DescribeTopics", payload)
+        topics = [
+            {
+                "topic_id": item.get("TopicId"),
+                "topic_name": item.get("TopicName"),
+                "logset_id": item.get("LogsetId"),
+                "status": item.get("Status"),
+                "create_time": item.get("CreateTime"),
+            }
+            for item in response.get("Topics", [])
+        ]
+        return result("tencent-cloud-cls", topics, query=payload)
+    except Exception as exc:
+        logger.exception("CLS DescribeTopics failed")
+        return result("tencent-cloud-cls", [], status="error", error=str(exc))
 
-        return {
-            "topic_id": topic_id,
-            "start_time": start_time,
-            "end_time": end_time,
-            "query": query,
-            "limit": limit,
-            "total": len(logs),
-            "logs": logs,
-            "took_ms": 50,
-            "message": f"成功查询 {len(logs)} 条应用日志"
+
+async def query_cls_logs_impl(
+    service_name: str,
+    start_time: str | int | float | None = None,
+    end_time: str | int | float | None = None,
+    query: str | None = None,
+    topic_id: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    start = parse_time(start_time, default_minutes_ago=60)
+    end = parse_time(end_time)
+    if start >= end:
+        return result("tencent-cloud-cls", [], status="error", error="start_time 必须早于 end_time")
+    limit = max(1, min(limit, config.cls_max_results))
+    service = resolve_service(service_name)
+    resolved_topic = topic_id or service.get("cls_topic_id") or config.cls_topic_id
+    resolved_query = query or service.get("cls_query") or "*"
+    query_meta = {
+        "service_name": service["name"],
+        "topic_id": resolved_topic,
+        "query": resolved_query,
+        "start_time": start.isoformat(),
+        "end_time": end.isoformat(),
+        "limit": limit,
+    }
+    if config.aiops_data_mode == "mock":
+        return result(
+            "tencent-cloud-cls",
+            _mock_logs(service["name"], start, limit),
+            query=query_meta,
+        )
+    if not resolved_topic:
+        return result(
+            "tencent-cloud-cls",
+            [],
+            status="error",
+            error=f"服务 {service_name} 未配置 CLS topic_id",
+            query=query_meta,
+        )
+    try:
+        payload = {
+            "TopicId": resolved_topic,
+            "From": int(start.timestamp() * 1000),
+            "To": int(end.timestamp() * 1000),
+            "Query": resolved_query,
+            "Limit": limit,
+            "Sort": "desc",
         }
-    else:
-        # 其他 topic_id: 返回错误，表示 topic 不存在
-        return {
-            "topic_id": topic_id,
-            "start_time": start_time,
-            "end_time": end_time,
-            "query": query,
-            "limit": limit,
-            "total": 0,
-            "logs": [],
-            "took_ms": 0,
-            "error": f"主题不存在: {topic_id}",
-            "message": f"错误: 未找到主题 {topic_id}，请检查 topic_id 是否正确"
-        }
+        response = await _call_cls("SearchLog", payload)
+        raw_results = response.get("Results", [])
+        logs = []
+        for item in raw_results:
+            raw = item.get("LogJson") or item.get("Log") or item
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except json.JSONDecodeError:
+                    raw = {"message": raw}
+            logs.append(raw)
+        warning = None if raw_results else "CLS 查询未返回日志记录。"
+        return result("tencent-cloud-cls", logs, warning=warning, query=query_meta)
+    except Exception as exc:
+        logger.exception("CLS SearchLog failed")
+        return result("tencent-cloud-cls", [], status="error", error=str(exc), query=query_meta)
 
+
+@mcp.tool()
+async def get_cls_status() -> dict[str, Any]:
+    """Return CLS mode and configuration readiness without exposing secrets."""
+    ready = bool(config.tencentcloud_secret_id and config.tencentcloud_secret_key)
+    return result(
+        "tencent-cloud-cls",
+        {"configured": ready, "region": config.tencentcloud_region},
+        status="success" if config.aiops_data_mode == "mock" or ready else "unavailable",
+    )
+
+
+@mcp.tool()
+async def list_log_topics(name_keyword: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """List Tencent Cloud CLS topics, optionally filtered by topic name."""
+    return await list_log_topics_impl(name_keyword, limit)
+
+
+@mcp.tool()
+async def query_cls_logs(
+    service_name: str,
+    start_time: str | int | float | None = None,
+    end_time: str | int | float | None = None,
+    query: str | None = None,
+    topic_id: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Query CLS logs with CQL using a service mapping or an explicit topic ID."""
+    return await query_cls_logs_impl(service_name, start_time, end_time, query, topic_id, limit)
+
+
+async def search_service_logs_impl(
+    service_name: str,
+    log_level: str | None = None,
+    keyword: str | None = None,
+    lookback_minutes: int = 60,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Convenience CLS search for service logs, log level, and keyword."""
+    clauses = []
+    service = resolve_service(service_name)
+    if service.get("cls_query"):
+        clauses.append(str(service["cls_query"]))
+    if log_level:
+        clauses.append(f'level:"{log_level.upper()}"')
+    if keyword:
+        status_codes = list(dict.fromkeys(_STATUS_CODE_PATTERN.findall(keyword)))
+        if status_codes:
+            status_query = " OR ".join(f"status_code:{code}" for code in status_codes)
+            clauses.append(f"({status_query})")
+        else:
+            escaped = keyword.replace('"', '\\"')
+            clauses.append(f'"{escaped}"')
+    query = " AND ".join(clauses) or "*"
+    end = datetime.now(_UTC)
+    start = end - timedelta(minutes=max(1, min(lookback_minutes, 1440)))
+    return await query_cls_logs_impl(
+        service_name,
+        start_time=start.isoformat(),
+        end_time=end.isoformat(),
+        query=query,
+        limit=limit,
+    )
+
+
+@mcp.tool()
+async def search_service_logs(
+    service_name: str,
+    log_level: str | None = None,
+    keyword: str | None = None,
+    lookback_minutes: int = 60,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Convenience CLS search for service logs, log level, and keyword."""
+    return await search_service_logs_impl(
+        service_name,
+        log_level=log_level,
+        keyword=keyword,
+        lookback_minutes=lookback_minutes,
+        limit=limit,
+    )
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     mcp.run(transport="streamable-http", host="127.0.0.1", port=8003, path="/mcp")

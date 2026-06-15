@@ -324,6 +324,15 @@ body {
     transform: translateY(0.5px);
 }
 
+.ai-ops-top-btn:disabled {
+    cursor: wait;
+}
+
+.ai-ops-top-btn:disabled .ai-ops-top-btn__inner {
+    opacity: 0.62;
+    box-shadow: none;
+}
+
 .ai-ops-top-btn__icon {
     width: 17px;
     height: 17px;

@@ -3,13 +3,18 @@
 基于 LangGraph 官方教程实现
 """
 
-from typing import AsyncGenerator, Dict, Any
-from langgraph.graph import StateGraph, END
+import json
+import uuid
+from collections.abc import AsyncGenerator
+from typing import Any, cast
+
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
 from loguru import logger
 
-from app.agent.aiops import PlanExecuteState, planner, executor, replanner
-
+from app.agent.aiops import PlanExecuteState, executor, planner, replanner
+from app.config import config
+from mcp_servers.monitor_server import get_active_alerts_impl
 
 # 节点名称常量
 NODE_PLANNER = "planner"
@@ -34,7 +39,7 @@ class AIOpsService:
         workflow = StateGraph(PlanExecuteState)
 
         # 添加节点
-        workflow.add_node(NODE_PLANNER, planner)      # 制定计划
+        workflow.add_node(NODE_PLANNER, planner)  # 制定计划
         workflow.add_node(NODE_EXECUTOR, executor)  # 执行步骤
         workflow.add_node(NODE_REPLANNER, replanner)  # 重新规划
 
@@ -42,8 +47,8 @@ class AIOpsService:
         workflow.set_entry_point(NODE_PLANNER)
 
         # 定义边
-        workflow.add_edge(NODE_PLANNER, NODE_EXECUTOR)     # planner -> executor
-        workflow.add_edge(NODE_EXECUTOR, NODE_REPLANNER)   # executor -> replanner
+        workflow.add_edge(NODE_PLANNER, NODE_EXECUTOR)  # planner -> executor
+        workflow.add_edge(NODE_EXECUTOR, NODE_REPLANNER)  # executor -> replanner
 
         # replanner 的条件边
         def should_continue(state: PlanExecuteState) -> str:
@@ -51,7 +56,7 @@ class AIOpsService:
             # 如果已经生成了最终响应，结束
             if state.get("response"):
                 logger.info("已生成最终响应，结束流程")
-                return END
+                return cast(str, END)
 
             # 如果还有计划步骤，继续执行
             plan = state.get("plan", [])
@@ -61,15 +66,10 @@ class AIOpsService:
 
             # 计划为空但没有响应，返回 replanner 生成响应
             logger.info("计划执行完毕，生成最终响应")
-            return END
+            return cast(str, END)
 
         workflow.add_conditional_edges(
-            NODE_REPLANNER,
-            should_continue,
-            {
-                NODE_EXECUTOR: NODE_EXECUTOR,
-                END: END
-            }
+            NODE_REPLANNER, should_continue, {NODE_EXECUTOR: NODE_EXECUTOR, END: END}
         )
 
         # 编译工作流
@@ -81,8 +81,11 @@ class AIOpsService:
     async def execute(
         self,
         user_input: str,
-        session_id: str = "default"
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        session_id: str = "default",
+        alerts: list[dict[str, Any]] | None = None,
+        alert_source: str = "unknown",
+        lookback_minutes: int = 60,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """
         执行 Plan-Execute-Replan 流程
 
@@ -101,20 +104,37 @@ class AIOpsService:
                 "input": user_input,
                 "plan": [],
                 "past_steps": [],
-                "response": ""
+                "response": "",
+                "alerts": alerts or [],
+                "alert_source": alert_source,
+                "data_mode": config.aiops_data_mode,
+                "lookback_minutes": lookback_minutes,
+                "evidence": [],
+            }
+
+            yield {
+                "type": "status",
+                "stage": "data_source",
+                "message": (
+                    "当前使用 Mock 演示数据，不代表真实生产环境"
+                    if config.aiops_data_mode == "mock"
+                    else "当前使用真实 CLS/TMP/Alertmanager 数据"
+                ),
+                "data_mode": config.aiops_data_mode,
+                "is_mock": config.aiops_data_mode == "mock",
+                "alert_source": alert_source,
             }
 
             # 流式执行工作流
             config_dict = {
                 "configurable": {
-                    "thread_id": session_id
+                    # 每次诊断独立运行，避免 operator.add 合并同一会话的旧证据。
+                    "thread_id": f"{session_id}:{uuid.uuid4()}"
                 }
             }
 
             async for event in self.graph.astream(
-                input=initial_state,
-                config=config_dict,
-                stream_mode="updates"
+                input=initial_state, config=config_dict, stream_mode="updates"
             ):
                 # 解析事件
                 for node_name, node_output in event.items():
@@ -143,23 +163,24 @@ class AIOpsService:
                 "type": "complete",
                 "stage": "complete",
                 "message": "任务执行完成",
-                "response": final_response
+                "response": final_response,
+                "data_mode": config.aiops_data_mode,
+                "is_mock": config.aiops_data_mode == "mock",
             }
 
             logger.info(f"[会话 {session_id}] 任务执行完成")
 
         except Exception as e:
             logger.error(f"[会话 {session_id}] 任务执行失败: {e}", exc_info=True)
-            yield {
-                "type": "error",
-                "stage": "error",
-                "message": f"任务执行出错: {str(e)}"
-            }
+            yield {"type": "error", "stage": "error", "message": f"任务执行出错: {str(e)}"}
 
     async def diagnose(
         self,
-        session_id: str = "default"
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        session_id: str = "default",
+        alerts: list[dict[str, Any]] | None = None,
+        lookback_minutes: int = 60,
+        alert_source: str | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """
         AIOps 诊断接口（兼容旧接口）
 
@@ -169,9 +190,57 @@ class AIOpsService:
         Yields:
             Dict[str, Any]: 诊断过程的流式事件
         """
-        # 使用固定的 AIOps 任务描述
+        resolved_alert_source = alert_source or "api"
+        selected_alerts = list(alerts or [])
+        if not selected_alerts:
+            resolved_alert_source = "alertmanager"
+            alert_result = await get_active_alerts_impl()
+            if alert_result.get("status") in {"error", "unavailable"}:
+                yield {
+                    "type": "status",
+                    "stage": "fetching_alerts",
+                    "message": f"获取活跃告警失败: {alert_result.get('error', 'unknown error')}",
+                    "is_mock": alert_result.get("is_mock", False),
+                }
+            selected_alerts = alert_result.get("data") or []
+
+        yield {
+            "type": "status",
+            "stage": "alerts_loaded",
+            "message": f"已从 {resolved_alert_source} 获取 {len(selected_alerts)} 条活跃告警",
+            "alert_source": resolved_alert_source,
+            "alert_count": len(selected_alerts),
+            "is_mock": config.aiops_data_mode == "mock",
+        }
+
+        if not selected_alerts:
+            report = "# 告警分析报告\n\n当前未发现活跃告警，未执行日志和指标排查。"
+            yield {
+                "type": "report",
+                "stage": "final_report",
+                "message": "当前无活跃告警",
+                "report": report,
+                "is_mock": False,
+            }
+            yield {
+                "type": "complete",
+                "stage": "diagnosis_complete",
+                "message": "诊断流程完成",
+                "diagnosis": {"status": "no_active_alerts", "report": report},
+                "is_mock": False,
+            }
+            return
+
+        # 使用标准化任务描述，并把结构化告警作为不可忽略的诊断输入。
         from textwrap import dedent
-        aiops_task = dedent("""诊断当前系统是否存在告警，如果存在告警请详细分析告警原因并生成诊断报告，诊断报告输出格式要求：
+
+        alerts_json = json.dumps(selected_alerts, ensure_ascii=False, default=str)
+        aiops_task = dedent(f"""请诊断以下活跃告警，使用可用的知识库、监控指标和腾讯云 CLS 日志完成根因分析。
+                告警来源: {resolved_alert_source}
+                默认回看时间: {lookback_minutes} 分钟
+                告警内容: {alerts_json}
+
+                诊断报告输出格式要求：
                 ```
                 # 告警分析报告
 
@@ -245,7 +314,13 @@ class AIOpsService:
                 - 所有内容必须基于工具查询的真实数据，严禁编造
                 - 如果某个步骤失败，在结论中如实说明，不要跳过""")
 
-        async for event in self.execute(aiops_task, session_id):
+        async for event in self.execute(
+            aiops_task,
+            session_id,
+            alerts=selected_alerts,
+            alert_source=resolved_alert_source,
+            lookback_minutes=lookback_minutes,
+        ):
             # 转换事件格式以兼容旧的 API
             if event.get("type") == "complete":
                 # 将 response 包装为 diagnosis 格式
@@ -253,22 +328,17 @@ class AIOpsService:
                     "type": "complete",
                     "stage": "diagnosis_complete",
                     "message": "诊断流程完成",
-                    "diagnosis": {
-                        "status": "completed",
-                        "report": event.get("response", "")
-                    }
+                    "diagnosis": {"status": "completed", "report": event.get("response", "")},
+                    "data_mode": event.get("data_mode"),
+                    "is_mock": event.get("is_mock", False),
                 }
             else:
                 yield event
 
-    def _format_planner_event(self, state: Dict | None) -> Dict:
+    def _format_planner_event(self, state: dict | None) -> dict:
         """格式化 Planner 节点事件"""
         if not state:
-            return {
-                "type": "status",
-                "stage": "planner",
-                "message": "规划节点执行中"
-            }
+            return {"type": "status", "stage": "planner", "message": "规划节点执行中"}
 
         plan = state.get("plan", [])
 
@@ -276,20 +346,17 @@ class AIOpsService:
             "type": "plan",
             "stage": "plan_created",
             "message": f"执行计划已制定，共 {len(plan)} 个步骤",
-            "plan": plan
+            "plan": plan,
         }
 
-    def _format_executor_event(self, state: Dict | None) -> Dict:
+    def _format_executor_event(self, state: dict | None) -> dict:
         """格式化 Executor 节点事件"""
         if not state:
-            return {
-                "type": "status",
-                "stage": "executor",
-                "message": "执行节点运行中"
-            }
+            return {"type": "status", "stage": "executor", "message": "执行节点运行中"}
 
         plan = state.get("plan", [])
         past_steps = state.get("past_steps", [])
+        evidence = state.get("evidence", [])
 
         if past_steps:
             last_step, _ = past_steps[-1]
@@ -298,23 +365,16 @@ class AIOpsService:
                 "stage": "step_executed",
                 "message": f"步骤执行完成 ({len(past_steps)}/{len(past_steps) + len(plan)})",
                 "current_step": last_step,
-                "remaining_steps": len(plan)
+                "remaining_steps": len(plan),
+                "evidence_count": len(evidence),
             }
         else:
-            return {
-                "type": "status",
-                "stage": "executor",
-                "message": "开始执行步骤"
-            }
+            return {"type": "status", "stage": "executor", "message": "开始执行步骤"}
 
-    def _format_replanner_event(self, state: Dict | None) -> Dict:
+    def _format_replanner_event(self, state: dict | None) -> dict:
         """格式化 Replanner 节点事件"""
         if not state:
-            return {
-                "type": "status",
-                "stage": "replanner",
-                "message": "评估节点运行中"
-            }
+            return {"type": "status", "stage": "replanner", "message": "评估节点运行中"}
 
         response = state.get("response", "")
         plan = state.get("plan", [])
@@ -325,7 +385,7 @@ class AIOpsService:
                 "type": "report",
                 "stage": "final_report",
                 "message": "最终报告已生成",
-                "report": response
+                "report": response,
             }
         else:
             # 重新规划
@@ -333,7 +393,7 @@ class AIOpsService:
                 "type": "status",
                 "stage": "replanner",
                 "message": f"评估完成，{'继续执行剩余步骤' if plan else '准备生成最终响应'}",
-                "remaining_steps": len(plan)
+                "remaining_steps": len(plan),
             }
 
 

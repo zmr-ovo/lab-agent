@@ -28,6 +28,7 @@ ENV/
 
 # uv
 .uv/
+.tools/
 
 # Poetry (legacy)
 poetry.lock
@@ -49,6 +50,7 @@ poetry.lock
 
 # Logs
 logs/
+runtime/
 *.log
 *.pid
 
@@ -79,4 +81,3 @@ dmypy.json
 
 # Ruff
 .ruff_cache/
-
