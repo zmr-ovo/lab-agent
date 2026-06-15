@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     milvus_host: str = "localhost"
     milvus_port: int = 19530
     milvus_timeout: int = 10000  # 毫秒
+    milvus_metric_type: str = "COSINE"
+    """向量相似度度量：COSINE（余弦）/ L2（欧氏）/ IP（内积）。
+    修改后，已存在 collection 的索引会在下次启动时自动按新 metric 重建（无需重新灌库）。"""
 
     # RAG 配置
     rag_top_k: int = 3

@@ -46,6 +46,7 @@ class VectorStoreManager:
 
             # 创建 LangChain Milvus VectorStore
             # 使用 biz collection，字段映射：text_field -> content, vector_field -> vector
+            metric_type = config.milvus_metric_type.upper()
             self.vector_store = Milvus(
                 embedding_function=vector_embedding_service,
                 collection_name=self.collection_name,
@@ -56,6 +57,16 @@ class VectorStoreManager:
                 vector_field="vector",  # 向量存储到 vector 字段
                 primary_field="id",  # 主键字段
                 metadata_field="metadata",  # 元数据字段
+                # 与 milvus_client 建索引时的 metric 保持一致（默认 COSINE）
+                index_params={
+                    "metric_type": metric_type,
+                    "index_type": "IVF_FLAT",
+                    "params": {"nlist": 128},
+                },
+                search_params={
+                    "metric_type": metric_type,
+                    "params": {"nprobe": 10},
+                },
             )
 
             logger.info(

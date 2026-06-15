@@ -108,6 +108,7 @@ class MilvusClientManager:
                         vector_field = field
                         break
                 
+                recreated = False
                 if vector_field and hasattr(vector_field, 'params') and 'dim' in vector_field.params:
                     existing_dim = vector_field.params['dim']
                     if existing_dim != self.VECTOR_DIM:
@@ -119,8 +120,13 @@ class MilvusClientManager:
                         logger.info(f"正在重新创建 collection '{self.COLLECTION_NAME}'...")
                         self._create_collection()
                         logger.info(f"成功重新创建 collection，维度: {self.VECTOR_DIM}")
+                        recreated = True
                     else:
                         logger.info(f"向量维度匹配: {self.VECTOR_DIM}")
+
+                # 维度未触发重建时，校验索引 metric 是否与配置一致（不一致则重建索引）
+                if not recreated:
+                    self._ensure_index_metric()
 
             # 加载 collection
             self._load_collection()
@@ -195,7 +201,7 @@ class MilvusClientManager:
             raise RuntimeError("Collection 未初始化")
 
         index_params = {
-            "metric_type": "L2",  # 欧氏距离
+            "metric_type": config.milvus_metric_type.upper(),  # COSINE / L2 / IP
             "index_type": "IVF_FLAT",
             "params": {"nlist": 128},
         }
@@ -205,7 +211,50 @@ class MilvusClientManager:
             index_params=index_params,
         )
 
-        logger.info("成功为 vector 字段创建索引")
+        logger.info(
+            f"成功为 vector 字段创建索引 (metric={config.milvus_metric_type.upper()})"
+        )
+
+    def _ensure_index_metric(self) -> None:
+        """确保 vector 索引的 metric_type 与配置一致，不一致则重建索引（无需重新灌库）。
+
+        余弦 / L2 仅是检索时的距离度量，向量数据本身不变，因此只需重建索引而非重新嵌入。
+        重建前必须先 release collection，否则 Milvus 不允许修改索引。
+        """
+        if self._collection is None:
+            return
+
+        desired = config.milvus_metric_type.upper()
+
+        try:
+            current = None
+            for idx in self._collection.indexes:
+                if idx.field_name == "vector":
+                    current = (idx.params or {}).get("metric_type")
+                    break
+        except Exception as e:
+            logger.warning(f"读取现有索引信息失败，跳过 metric 校验: {e}")
+            return
+
+        if current is None:
+            logger.info("vector 字段尚无索引，正在创建...")
+            self._create_index()
+            return
+
+        if str(current).upper() == desired:
+            logger.info(f"向量索引 metric 匹配: {desired}")
+            return
+
+        logger.warning(
+            f"检测到向量索引 metric 不匹配！当前: {current}, 配置: {desired}，正在重建索引..."
+        )
+        try:
+            self._collection.release()
+        except Exception:
+            pass
+        self._collection.drop_index()
+        self._create_index()
+        logger.info(f"成功重建向量索引，metric: {desired}")
 
     def _load_collection(self) -> None:
         """加载 collection 到内存"""
