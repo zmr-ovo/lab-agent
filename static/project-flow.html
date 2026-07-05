@@ -905,7 +905,7 @@
                                 <div class="fact"><b>职责</b><span>创建 ChatQwen Agent，合并本地工具与 MCP 工具，提供同步和流式查询、会话读取与清理。</span></div>
                                 <div class="fact"><b>状态</b><span>MemorySaver 使用 session_id 作为 thread_id，保存 LangGraph checkpoint，实现多轮上下文隔离。</span></div>
                                 <div class="fact"><b>策略</b><span>系统提示约束“内部知识库优先，知识不足再联网”，减少外部信息覆盖内部规范。</span></div>
-                                <div class="fact answer"><b>注意</b><span>代码定义了 trim_messages_middleware，但当前 create_agent 未注册它；不能声称历史修剪已经生效。</span></div>
+                                <div class="fact answer"><b>记忆</b><span>ReAct Agent 使用 SummarizationMiddleware 压缩早期对话历史，保留最近消息并降低长会话上下文膨胀。</span></div>
                             </div>
                         </article>
 
@@ -1069,7 +1069,7 @@
 
                             <details class="qa" data-category="rag"><summary>6. 如何避免模型编造答案？</summary><div class="qa-answer"><p class="speak">第一，系统提示要求知识库优先且不得编造工具未返回内容；第二，检索结果带来源和标题，便于引用；第三，工具失败返回显式错误，最终报告要求如实写明失败；第四，AIOps 报告基于 past_steps 证据生成。当前仍不是强保证，生产可增加引用校验、无证据拒答、结构化 claim-evidence 对齐和事实评测。</p></div></details>
 
-                            <details class="qa" data-category="agent"><summary>7. 多轮对话是怎么实现的？会有什么问题？</summary><div class="qa-answer"><p class="speak">LangGraph 使用 MemorySaver 作为 checkpointer，API 传入的 session_id 映射为 thread_id，因此不同会话的消息状态隔离。优点是实现简单、适合演示；缺点是进程重启丢失、无法多实例共享、历史增长会占内存。代码虽然定义了保留系统消息和最近对话的 trim 函数，但当前未挂到 create_agent，所以我会把它作为待完善项，而不会声称已生效。</p><p class="follow-up"><strong>生产方案：</strong>Postgres/Redis checkpointer + TTL + 摘要记忆 + 用户级鉴权。</p></div></details>
+                            <details class="qa" data-category="agent"><summary>7. 多轮对话是怎么实现的？会有什么问题？</summary><div class="qa-answer"><p class="speak">LangGraph 使用 MemorySaver 作为 checkpointer，API 传入的 session_id 映射为 thread_id，因此不同会话的消息状态隔离。ReAct Agent 已接入 SummarizationMiddleware，在上下文变长时压缩早期对话历史并保留最近消息。当前边界是 MemorySaver 仍为进程内存，进程重启会丢失，且不支持多实例共享。</p><p class="follow-up"><strong>生产方案：</strong>Postgres/Redis checkpointer + TTL + 摘要记忆 + 用户级鉴权。</p></div></details>
 
                             <details class="qa" data-category="agent"><summary>8. Plan-Execute-Replan 与 ReAct 有什么区别？</summary><div class="qa-answer"><p class="speak">ReAct 通常是模型在一个循环里交替思考和调用工具，灵活但过程容易发散。Plan-Execute-Replan 先显式生成多步计划，每次只执行一步，再根据累计证据评估继续、改计划或结束。它更适合长链路诊断，因为计划、历史和终止条件都是显式状态，代价是 LLM 调用次数更多。</p></div></details>
 

@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     rag_flashrank_max_length: int = 512
     """FlashRank cross-encoder 输入长度上限（token 级预算，需覆盖 query+单段 passage）。"""
     rag_model: str = "qwen-max"  # 使用快速响应模型，不带扩展思考
+    rag_summary_enabled: bool = True
+    """是否为 ReAct RAG Agent 启用 SummarizationMiddleware 压缩早期对话历史。"""
+    rag_summary_trigger_tokens: int = 12000
+    """当会话消息估算 token 数达到该阈值时触发历史总结。"""
+    rag_summary_keep_messages: int = 12
+    """触发总结后保留的最近消息数量。"""
+    rag_summary_trim_tokens: int = 4000
+    """每次送入总结模型的旧历史 token 预算。"""
 
     # Tavily 联网搜索（可选；未配置 API Key 时不注册该工具）
     tavily_api_key: str = ""

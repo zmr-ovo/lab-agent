@@ -6,8 +6,9 @@
 import json
 import uuid
 from collections.abc import AsyncGenerator
-from typing import Any, cast
+from typing import Any
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from loguru import logger
@@ -56,7 +57,7 @@ class AIOpsService:
             # 如果已经生成了最终响应，结束
             if state.get("response"):
                 logger.info("已生成最终响应，结束流程")
-                return cast(str, END)
+                return END
 
             # 如果还有计划步骤，继续执行
             plan = state.get("plan", [])
@@ -66,7 +67,7 @@ class AIOpsService:
 
             # 计划为空但没有响应，返回 replanner 生成响应
             logger.info("计划执行完毕，生成最终响应")
-            return cast(str, END)
+            return END
 
         workflow.add_conditional_edges(
             NODE_REPLANNER, should_continue, {NODE_EXECUTOR: NODE_EXECUTOR, END: END}
@@ -126,7 +127,7 @@ class AIOpsService:
             }
 
             # 流式执行工作流
-            config_dict = {
+            config_dict: RunnableConfig = {
                 "configurable": {
                     # 每次诊断独立运行，避免 operator.add 合并同一会话的旧证据。
                     "thread_id": f"{session_id}:{uuid.uuid4()}"

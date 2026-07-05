@@ -4,74 +4,28 @@
 支持真正的流式输出和更好的模型适配。
 """
 
-from typing import Annotated, Any, AsyncGenerator, Dict, Sequence
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import SummarizationMiddleware
 from langchain_core.messages import (
-    BaseMessage,
     HumanMessage,
-    RemoveMessage,
     SystemMessage,
 )
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph.message import REMOVE_ALL_MESSAGES, add_messages
-from loguru import logger
-from typing_extensions import TypedDict
+from langchain_core.runnables import RunnableConfig
 from langchain_qwq import ChatQwen
+from langgraph.checkpoint.memory import MemorySaver
+from loguru import logger
+from pydantic import SecretStr
 
+from app.agent.mcp_client import get_mcp_client_with_retry
 from app.config import config
 from app.tools import get_current_time, retrieve_knowledge, with_optional_tavily
-from app.agent.mcp_client import get_mcp_client_with_retry
 
 # 阿里千问大模型和langchain集成参考： https://docs.langchain.com/oss/python/integrations/chat/qwen
 # 注意：需要配置环境变量 DASHSCOPE_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1 否则默认访问的是新加坡站点
 # 同时也需要配置环境变量 DASHSCOPE_API_KEY=your_api_key
-
-
-class AgentState(TypedDict):
-    """Agent 状态"""
-    messages: Annotated[Sequence[BaseMessage], add_messages]
-
-
-def trim_messages_middleware(state: AgentState) -> dict[str, Any] | None:
-    """
-    修剪消息历史，只保留最近的几条消息以适应上下文窗口
-
-    策略：
-    - 保留第一条系统消息（System Message）
-    - 保留最近的 6 条消息（3 轮对话）
-    - 当消息少于等于 7 条时，不做修剪
-
-    Args:
-        state: Agent 状态
-
-    Returns:
-        包含修剪后消息的字典，如果无需修剪则返回 None
-    """
-    messages = state["messages"]
-
-    # 如果消息数量较少，无需修剪
-    if len(messages) <= 7:
-        return None
-
-    # 提取第一条系统消息
-    first_msg = messages[0]
-
-    # 保留最近的 6 条消息（确保包含完整的对话轮次）
-    recent_messages = messages[-6:] if len(messages) % 2 == 0 else messages[-7:]
-
-    # 构建新的消息列表
-    new_messages = [first_msg] + list(recent_messages)
-
-    logger.debug(f"修剪消息历史: {len(messages)} -> {len(new_messages)} 条")
-
-    return {
-        "messages": [
-            RemoveMessage(id=REMOVE_ALL_MESSAGES),
-            *new_messages
-        ]
-    }
-
 
 class RagAgentService:
     """RAG Agent 服务 - 使用 LangGraph + ChatQwen 原生集成"""
@@ -86,12 +40,18 @@ class RagAgentService:
         self.streaming = streaming
         self.system_prompt = self._build_system_prompt()
 
-
+        api_key = SecretStr(config.dashscope_api_key)
         self.model = ChatQwen(
             model=self.model_name,
-            api_key=config.dashscope_api_key,
+            api_key=api_key,
             temperature=0.7,
             streaming=streaming,
+        )
+        self.summary_model = ChatQwen(
+            model=self.model_name,
+            api_key=api_key,
+            temperature=0,
+            streaming=False,
         )
 
         # 定义基础工具（知识库优先；配置 TAVILY_API_KEY 时追加公网检索）
@@ -104,7 +64,7 @@ class RagAgentService:
         self.checkpointer = MemorySaver()
 
         # Agent 初始化（会在异步方法中完成）
-        self.agent = None
+        self.agent: Any | None = None
         self._agent_initialized = False
 
         logger.info(f"RAG Agent 服务初始化完成 (ChatQwen), model={self.model_name}, streaming={streaming}")
@@ -130,6 +90,8 @@ class RagAgentService:
         self.agent = create_agent(
             self.model,
             tools=all_tools,
+            system_prompt=self.system_prompt,
+            middleware=self._build_middleware(),
             checkpointer=self.checkpointer,
         )
 
@@ -139,6 +101,33 @@ class RagAgentService:
         if all_tools:
             tool_names = [tool.name if hasattr(tool, "name") else str(tool) for tool in all_tools]
             logger.info(f"可用工具列表: {', '.join(tool_names)}")
+
+    def _get_agent(self) -> Any:
+        """Return the initialized agent."""
+        if self.agent is None:
+            raise RuntimeError("RAG Agent 尚未初始化")
+        return self.agent
+
+    def _build_middleware(self) -> list[Any]:
+        """Build middleware for the ReAct agent."""
+        if not config.rag_summary_enabled:
+            logger.info("RAG Agent 历史总结中间件未启用")
+            return []
+
+        logger.info(
+            "RAG Agent 启用 SummarizationMiddleware: "
+            f"trigger={config.rag_summary_trigger_tokens}, "
+            f"keep={config.rag_summary_keep_messages}, "
+            f"trim={config.rag_summary_trim_tokens}"
+        )
+        return [
+            SummarizationMiddleware(
+                model=self.summary_model,
+                trigger=("tokens", config.rag_summary_trigger_tokens),
+                keep=("messages", config.rag_summary_keep_messages),
+                trim_tokens_to_summarize=config.rag_summary_trim_tokens,
+            )
+        ]
 
     def _build_system_prompt(self) -> str:
         """
@@ -189,26 +178,26 @@ class RagAgentService:
         """
         try:
             await self._initialize_agent()
+            agent = self._get_agent()
 
             logger.info(f"[会话 {session_id}] RAG Agent 收到查询（非流式）: {question}")
 
-            # 构建消息列表（系统提示 + 用户问题）
-            messages = [
-                SystemMessage(content=self.system_prompt),
+            # 系统提示由 create_agent(system_prompt=...) 管理，避免反复写入会话历史。
+            messages: list[HumanMessage] = [
                 HumanMessage(content=question)
             ]
 
             # 构建 Agent 输入
-            agent_input = {"messages": messages}
+            agent_input: dict[str, list[HumanMessage]] = {"messages": messages}
 
             # 配置 thread_id（用于会话持久化）
-            config_dict = {
+            config_dict: RunnableConfig = {
                 "configurable": {
                     "thread_id": session_id
                 }
             }
 
-            result = await self.agent.ainvoke(
+            result = await agent.ainvoke(
                 input=agent_input,
                 config=config_dict,
             )
@@ -238,7 +227,7 @@ class RagAgentService:
         self,
         question: str,
         session_id: str,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """
         流式处理用户问题（逐步返回答案片段）
 
@@ -253,26 +242,26 @@ class RagAgentService:
         """
         try:
             await self._initialize_agent()
+            agent = self._get_agent()
 
             logger.info(f"[会话 {session_id}] RAG Agent 收到查询（流式）: {question}")
 
-            # 构建消息列表（系统提示 + 用户问题）
-            messages = [
-                SystemMessage(content=self.system_prompt),
+            # 系统提示由 create_agent(system_prompt=...) 管理，避免反复写入会话历史。
+            messages: list[HumanMessage] = [
                 HumanMessage(content=question)
             ]
 
             # 构建 Agent 输入
-            agent_input = {"messages": messages}
+            agent_input: dict[str, list[HumanMessage]] = {"messages": messages}
 
             # 配置 thread_id（用于会话持久化）
-            config_dict = {
+            config_dict: RunnableConfig = {
                 "configurable": {
                     "thread_id": session_id
                 }
             }
 
-            async for token, metadata in self.agent.astream(
+            async for token, metadata in agent.astream(
                 input=agent_input,
                 config=config_dict,
                 stream_mode="messages",
@@ -305,7 +294,7 @@ class RagAgentService:
             }
             raise
 
-    def get_session_history(self, session_id: str) -> list:
+    def get_session_history(self, session_id: str) -> list[dict[str, Any]]:
         """
         获取会话历史（从 MemorySaver checkpointer 中读取）
 
@@ -317,36 +306,28 @@ class RagAgentService:
         """
         try:
             # 使用 checkpointer 的 get 方法获取最新的检查点
-            config = {"configurable": {"thread_id": session_id}}
-            
+            runnable_config: RunnableConfig = {"configurable": {"thread_id": session_id}}
+
             # 获取该 thread 的最新检查点
-            checkpoint_tuple = self.checkpointer.get(config)
-            
-            if not checkpoint_tuple:
+            checkpoint_data = self.checkpointer.get(runnable_config)
+
+            if not checkpoint_data:
                 logger.info(f"获取会话历史: {session_id}, 消息数量: 0")
                 return []
-            
-            # checkpoint_tuple 可能是命名元组或普通元组，安全地提取 checkpoint
-            # 通常第一个元素是 checkpoint 数据
-            if hasattr(checkpoint_tuple, 'checkpoint'):
-                checkpoint_data = checkpoint_tuple.checkpoint  # type: ignore
-            else:
-                # 如果是普通元组，第一个元素是 checkpoint
-                checkpoint_data = checkpoint_tuple[0] if checkpoint_tuple else {}
-            
+
             # 从检查点中提取消息
             messages = checkpoint_data.get("channel_values", {}).get("messages", [])
-            
+
             # 转换为前端需要的格式
-            history = []
+            history: list[dict[str, Any]] = []
             for msg in messages:
                 # 跳过系统消息
                 if isinstance(msg, SystemMessage):
                     continue
-                    
+
                 role = "user" if isinstance(msg, HumanMessage) else "assistant"
                 content = msg.content if hasattr(msg, 'content') else str(msg)
-                
+
                 # 提取时间戳（如果有的话）
                 timestamp = getattr(msg, 'timestamp', None)
                 if timestamp:
@@ -362,10 +343,10 @@ class RagAgentService:
                         "content": content,
                         "timestamp": datetime.now().isoformat()
                     })
-            
+
             logger.info(f"获取会话历史: {session_id}, 消息数量: {len(history)}")
             return history
-            
+
         except Exception as e:
             logger.error(f"获取会话历史失败: {session_id}, 错误: {e}")
             return []
@@ -383,10 +364,10 @@ class RagAgentService:
         try:
             # 使用 checkpointer 的 delete_thread 方法删除该 thread 的所有检查点
             self.checkpointer.delete_thread(session_id)
-            
+
             logger.info(f"已清除会话历史: {session_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"清空会话历史失败: {session_id}, 错误: {e}")
             return False

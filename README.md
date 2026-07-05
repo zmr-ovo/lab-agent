@@ -233,14 +233,14 @@ POST https://<public-host>/api/aiops/webhook/cls?token=<AIOPS_WEBHOOK_TOKEN>
 
 ### ReAct RAG Agent
 
-普通问答由 `app/services/rag_agent_service.py` 提供，使用 `langchain.agents.create_agent` 创建 ReAct 风格工具调用 Agent。Agent 维护会话级 `thread_id`，通过 `MemorySaver` 保存多轮上下文；工具列表由本地工具和 MCP 工具合并而来。
+普通问答由 `app/services/rag_agent_service.py` 提供，使用 `langchain.agents.create_agent` 创建 ReAct 风格工具调用 Agent。Agent 维护会话级 `thread_id`，通过 `MemorySaver` 保存多轮上下文，并用 `SummarizationMiddleware` 压缩早期对话历史；工具列表由本地工具和 MCP 工具合并而来。
 
 ```text
 用户问题
   ↓
 FastAPI /api/chat 或 /api/chat_stream
   ↓
-RagAgentService 初始化 ChatQwen、MemorySaver、本地工具和 MCP 工具
+RagAgentService 初始化 ChatQwen、MemorySaver、SummarizationMiddleware、本地工具和 MCP 工具
   ↓
 LLM 根据系统提示判断是否需要工具
   ├─ retrieve_knowledge：Milvus 原生 hybrid_search 宽召回 → FlashRank 重排 → 返回参考上下文
