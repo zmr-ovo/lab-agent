@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520" role="img" aria-labelledby="title desc">
+  <title id="title">Lab Agent demo flow</title>
+  <desc id="desc">End-to-end flow from document upload and chat to AIOps diagnosis report.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#334155"/>
+    </marker>
+    <style>
+      text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #475569; }
+      .lane { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.5; }
+      .box { rx: 10; fill: #ffffff; stroke: #64748b; stroke-width: 1.5; }
+      .box-blue { fill: #eff6ff; stroke: #2563eb; }
+      .box-green { fill: #ecfdf5; stroke: #059669; }
+      .box-amber { fill: #fffbeb; stroke: #d97706; }
+      .box-red { fill: #fef2f2; stroke: #dc2626; }
+      .label { font-size: 16px; font-weight: 650; }
+      .small { font-size: 13px; fill: #475569; }
+      .arrow { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .dash { stroke-dasharray: 6 6; }
+      .pill { rx: 14; fill: #e2e8f0; }
+      .pill-text { font-size: 12px; font-weight: 650; fill: #334155; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="520" fill="#ffffff"/>
+  <text x="48" y="54" class="title">Lab Agent Interview Demo Flow</text>
+  <text x="48" y="82" class="subtitle">RAG knowledge service and AIOps diagnosis share bounded Agent execution, but optimize for different failure modes.</text>
+
+  <rect x="40" y="118" width="1200" height="150" rx="14" class="lane"/>
+  <text x="64" y="150" class="label">RAG Knowledge Flow</text>
+  <rect x="64" y="176" width="150" height="58" class="box box-blue"/>
+  <text x="88" y="200" class="label">Upload Docs</text>
+  <text x="88" y="220" class="small">Markdown / TXT</text>
+  <path d="M218 205 H276" class="arrow"/>
+  <rect x="284" y="176" width="170" height="58" class="box"/>
+  <text x="306" y="200" class="label">Split + Embed</text>
+  <text x="306" y="220" class="small">DashScope vector</text>
+  <path d="M458 205 H516" class="arrow"/>
+  <rect x="524" y="176" width="180" height="58" class="box box-green"/>
+  <text x="546" y="200" class="label">Milvus Hybrid</text>
+  <text x="546" y="220" class="small">dense + BM25 sparse</text>
+  <path d="M708 205 H766" class="arrow"/>
+  <rect x="774" y="176" width="150" height="58" class="box"/>
+  <text x="800" y="200" class="label">FlashRank</text>
+  <text x="800" y="220" class="small">local rerank</text>
+  <path d="M928 205 H986" class="arrow"/>
+  <rect x="994" y="176" width="190" height="58" class="box box-amber"/>
+  <text x="1018" y="200" class="label">ReAct Answer</text>
+  <text x="1018" y="220" class="small">summary + timeout + fallback</text>
+
+  <rect x="40" y="306" width="1200" height="154" rx="14" class="lane"/>
+  <text x="64" y="338" class="label">AIOps Diagnosis Flow</text>
+  <rect x="64" y="364" width="150" height="58" class="box box-red"/>
+  <text x="90" y="388" class="label">Alert Input</text>
+  <text x="90" y="408" class="small">API / Alertmanager</text>
+  <path d="M218 393 H276" class="arrow"/>
+  <rect x="284" y="364" width="150" height="58" class="box"/>
+  <text x="326" y="388" class="label">Planner</text>
+  <text x="306" y="408" class="small">4-6 diagnostic steps</text>
+  <path d="M438 393 H496" class="arrow"/>
+  <rect x="504" y="364" width="170" height="58" class="box box-blue"/>
+  <text x="536" y="388" class="label">Executor</text>
+  <text x="528" y="408" class="small">MCP + local tools</text>
+  <path d="M678 393 H736" class="arrow"/>
+  <rect x="744" y="364" width="170" height="58" class="box"/>
+  <text x="784" y="388" class="label">Replanner</text>
+  <text x="768" y="408" class="small">continue / replan / respond</text>
+  <path d="M918 393 H976" class="arrow"/>
+  <rect x="984" y="364" width="200" height="58" class="box box-green"/>
+  <text x="1010" y="388" class="label">Markdown Report</text>
+  <text x="1010" y="408" class="small">evidence + fallback guard</text>
+
+  <path d="M1084 364 C1084 315 1084 285 1084 236" class="arrow dash"/>
+  <rect x="894" y="276" width="352" height="28" class="pill"/>
+  <text x="912" y="295" class="pill-text">Shared AgentBoundaryConfig: total timeout + tool timeout + fallback</text>
+</svg>
