@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Protocol
 
 from langchain_core.documents import Document
 from loguru import logger
 
 from app.config import config
 
-_ranker: Optional[object] = None
+
+class FlashRankRanker(Protocol):
+    def rerank(self, request: Any) -> list[dict[str, Any]]: ...
 
 
-def _get_ranker() -> object:
+_ranker: FlashRankRanker | None = None
+
+
+def _get_ranker() -> FlashRankRanker:
     global _ranker
     if _ranker is None:
         from flashrank import Ranker
@@ -24,7 +29,7 @@ def _get_ranker() -> object:
     return _ranker
 
 
-def rerank_documents(query: str, documents: List[Document], top_n: int) -> List[Document]:
+def rerank_documents(query: str, documents: list[Document], top_n: int) -> list[Document]:
     """
     按 query 对文档列表重排，保留 top_n 条。
 
@@ -46,7 +51,7 @@ def rerank_documents(query: str, documents: List[Document], top_n: int) -> List[
         request = RerankRequest(query=query, passages=passages)
         ranked = ranker.rerank(request)
 
-        out: List[Document] = []
+        out: list[Document] = []
         for item in ranked[:top_n]:
             idx = int(item["id"])
             if idx < 0 or idx >= len(documents):

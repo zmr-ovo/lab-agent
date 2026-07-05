@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     milvus_metric_type: str = "COSINE"
     """向量相似度度量：COSINE（余弦）/ L2（欧氏）/ IP（内积）。
     修改后，已存在 collection 的索引会在下次启动时自动按新 metric 重建（无需重新灌库）。"""
+    milvus_hybrid_ranker: Literal["weighted", "rrf"] = "weighted"
+    """Milvus 原生混合检索结果融合策略：weighted / rrf。"""
+    milvus_dense_weight: float = 0.7
+    """WeightedRanker 中 dense 语义向量检索权重。"""
+    milvus_sparse_weight: float = 0.3
+    """WeightedRanker 中 BM25 sparse 关键词检索权重。"""
+    milvus_sparse_drop_ratio_search: float = 0.2
+    """Sparse/BM25 检索时丢弃低贡献项的比例，用于控制查询开销。"""
 
     # RAG 配置
     rag_top_k: int = 3

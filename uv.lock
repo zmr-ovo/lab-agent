@@ -1433,19 +1433,6 @@ wheels = [
 ]
 
 [[package]]
-name = "langchain-milvus"
-version = "0.3.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "langchain-core" },
-    { name = "pymilvus" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/09/21/ecce785a24e61ba2c0f6249a5a68b969ccc053342f933aeab31a3f885f5e/langchain_milvus-0.3.3.tar.gz", hash = "sha256:406c2d88da133741f5cc3e2fea4b36386182b35500205c70d003382ded210e41", size = 35577, upload-time = "2026-01-05T10:01:16.386Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/be/5d/6a0dac51ca2343332d5de9c79686d54f905d225b173a8e1b03ae6d35982a/langchain_milvus-0.3.3-py3-none-any.whl", hash = "sha256:6e12f15453372dd48836978faa4a149de79c721df3322229ad732a5e628e8e97", size = 38962, upload-time = "2026-01-05T10:01:15.186Z" },
-]
-
-[[package]]
 name = "langchain-openai"
 version = "1.1.9"
 source = { registry = "https://pypi.org/simple" }
@@ -3168,7 +3155,6 @@ dependencies = [
     { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langchain-mcp-adapters" },
-    { name = "langchain-milvus" },
     { name = "langchain-qwq" },
     { name = "langchain-text-splitters" },
     { name = "langgraph" },
@@ -3215,7 +3201,6 @@ requires-dist = [
     { name = "langchain-community", specifier = ">=0.0.20" },
     { name = "langchain-core", specifier = ">=0.1.0" },
     { name = "langchain-mcp-adapters", specifier = ">=0.2.1" },
-    { name = "langchain-milvus", specifier = ">=0.3.3" },
     { name = "langchain-qwq", specifier = ">=0.3.4" },
     { name = "langchain-text-splitters", specifier = ">=1.1.0" },
     { name = "langgraph", specifier = ">=0.0.40" },

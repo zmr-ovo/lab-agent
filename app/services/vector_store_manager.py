@@ -1,173 +1,167 @@
-"""向量存储管理器 - 封装 Milvus VectorStore 操作"""
+"""Native Milvus vector store manager for write and hybrid search."""
 
-from typing import cast
+import time
+import uuid
+from typing import Any, cast
 
 from langchain_core.documents import Document
-from langchain_milvus import Milvus
 from loguru import logger
+from pymilvus import AnnSearchRequest, RRFRanker, WeightedRanker
 from pymilvus.orm.mutation import MutationResult
 
 from app.config import config
 from app.core.milvus_client import milvus_manager
 from app.services.vector_embedding_service import vector_embedding_service
 
-# 统一使用 biz collection
-COLLECTION_NAME = "biz"
-
 
 class VectorStoreManager:
-    """向量存储管理器"""
+    """基于原生 PyMilvus 的唯一检索入口"""
 
-    def __init__(self):
-        """初始化向量存储管理器"""
-        self.vector_store = None
-        self.collection_name = COLLECTION_NAME
-
-    def _ensure_vector_store(self) -> Milvus:
-        """Lazily initialize Milvus so unrelated Agent/MCP imports remain available."""
-        if self.vector_store is None:
-            self._initialize_vector_store()
-        if self.vector_store is None:
-            raise RuntimeError("VectorStore 初始化失败")
-        return cast(Milvus, self.vector_store)
-
-    def _initialize_vector_store(self):
-        """初始化 Milvus VectorStore"""
-        try:
-            # 必须在 PyMilvus / langchain_milvus 访问 Collection 之前建立连接，
-            # 否则会出现 ConnectionNotExistException: should create connection first.
-            # （模块导入时就会执行此处，早于 FastAPI lifespan 中的 milvus_manager.connect）
-            _ = milvus_manager.connect()
-
-            connection_args = {
-                "host": config.milvus_host,
-                "port": config.milvus_port,
-            }
-
-            # 创建 LangChain Milvus VectorStore
-            # 使用 biz collection，字段映射：text_field -> content, vector_field -> vector
-            metric_type = config.milvus_metric_type.upper()
-            self.vector_store = Milvus(
-                embedding_function=vector_embedding_service,
-                collection_name=self.collection_name,
-                connection_args=connection_args,
-                auto_id=False,  # 使用自定义 id
-                drop_old=False,
-                text_field="content",  # 文本内容存储到 content 字段
-                vector_field="vector",  # 向量存储到 vector 字段
-                primary_field="id",  # 主键字段
-                metadata_field="metadata",  # 元数据字段
-                # 与 milvus_client 建索引时的 metric 保持一致（默认 COSINE）
-                index_params={
-                    "metric_type": metric_type,
-                    "index_type": "IVF_FLAT",
-                    "params": {"nlist": 128},
-                },
-                search_params={
-                    "metric_type": metric_type,
-                    "params": {"nprobe": 10},
-                },
-            )
-
-            logger.info(
-                f"VectorStore 初始化成功: {config.milvus_host}:{config.milvus_port}, "
-                f"collection: {self.collection_name}"
-            )
-
-        except Exception as e:
-            logger.error(f"VectorStore 初始化失败: {e}")
-            raise
+    def __init__(self) -> None:
+        self.collection_name = milvus_manager.COLLECTION_NAME
 
     def add_documents(self, documents: list[Document]) -> list[str]:
         """
-        批量添加文档到向量存储（自动批量向量化）
+        批量添加文档到 Milvus。
 
-        Args:
-            documents: 文档列表
-
-        Returns:
-            List[str]: 文档 ID 列表
+        Dense 向量由 DashScope embedding 生成；BM25 sparse 向量由 Milvus Function
+        根据 content 字段自动生成。
         """
+        if not documents:
+            return []
+
         try:
-            import time
-            import uuid
-
             start_time = time.time()
-
-            # 为每个文档生成唯一 id（因为 auto_id=False）
+            collection = self._get_collection()
             ids = [str(uuid.uuid4()) for _ in documents]
+            texts = [doc.page_content for doc in documents]
+            dense_vectors = vector_embedding_service.embed_documents(texts)
 
-            # LangChain Milvus 的 add_documents 会自动调用 embedding_function
-            # 并进行批量处理，性能更好
-            vector_store = self._ensure_vector_store()
-            result_ids = vector_store.add_documents(documents, ids=ids)
+            entities = [
+                {
+                    milvus_manager.PRIMARY_FIELD: doc_id,
+                    milvus_manager.DENSE_VECTOR_FIELD: dense_vector,
+                    milvus_manager.CONTENT_FIELD: doc.page_content,
+                    milvus_manager.METADATA_FIELD: doc.metadata,
+                }
+                for doc_id, dense_vector, doc in zip(ids, dense_vectors, documents, strict=True)
+            ]
+            result = collection.insert(entities)
+            collection.flush()
 
             elapsed = time.time() - start_time
             logger.info(
-                f"批量添加 {len(documents)} 个文档到 VectorStore 完成, "
+                f"批量添加 {len(documents)} 个文档到 Milvus 完成, "
+                f"insert_count={getattr(result, 'insert_count', len(ids))}, "
                 f"耗时: {elapsed:.2f}秒, 平均: {elapsed / len(documents):.2f}秒/个"
             )
-            return cast(list[str], result_ids)
+            return ids
         except Exception as e:
             logger.error(f"添加文档失败: {e}")
             raise
 
     def delete_by_source(self, file_path: str) -> int:
         """
-        删除指定文件的所有文档
-
-        Args:
-            file_path: 文件路径
-
-        Returns:
-            int: 删除的文档数量
+        删除指定来源文件的所有分片。
         """
         try:
-            # 使用 milvus_manager 获取已连接的 collection
-            collection = milvus_manager.get_collection()
-
-            # metadata 是 JSON 字段，使用 JSON 路径查询语法
-            # _source 是文档的来源文件路径
+            collection = self._get_collection()
             escaped_file_path = file_path.replace("\\", "\\\\").replace('"', '\\"')
-            expr = f'metadata["_source"] == "{escaped_file_path}"'
+            expr = f'{milvus_manager.METADATA_FIELD}["_source"] == "{escaped_file_path}"'
 
             result = cast(MutationResult, collection.delete(expr))
             deleted_count = int(result.delete_count)
+            collection.flush()
 
             logger.info(f"删除文件旧数据: {file_path}, 删除数量: {deleted_count}")
             return deleted_count
-
         except Exception as e:
             logger.warning(f"删除旧数据失败 (可能是首次索引): {e}")
             return 0
 
-    def get_vector_store(self) -> Milvus:
+    def hybrid_search(self, query: str, k: int = 3) -> list[Document]:
         """
-        获取 VectorStore 实例
+        使用 Milvus 原生 hybrid_search 执行 dense 语义检索 + BM25 sparse 检索。
+        """
+        if not query or not query.strip():
+            return []
 
-        Returns:
-            Milvus: VectorStore 实例
-        """
-        return self._ensure_vector_store()
+        try:
+            collection = self._get_collection()
+            limit = max(k, 1)
+            query_vector = vector_embedding_service.embed_query(query)
+
+            dense_req = AnnSearchRequest(
+                data=[query_vector],
+                anns_field=milvus_manager.DENSE_VECTOR_FIELD,
+                param={
+                    "metric_type": config.milvus_metric_type.upper(),
+                    "params": {"nprobe": 10},
+                },
+                limit=limit,
+            )
+            sparse_req = AnnSearchRequest(
+                data=[query],
+                anns_field=milvus_manager.SPARSE_VECTOR_FIELD,
+                param={
+                    "metric_type": "BM25",
+                    "params": {
+                        "drop_ratio_search": config.milvus_sparse_drop_ratio_search,
+                    },
+                },
+                limit=limit,
+            )
+
+            ranker = self._build_ranker()
+            results = collection.hybrid_search(
+                reqs=[dense_req, sparse_req],
+                rerank=ranker,
+                limit=limit,
+                output_fields=[
+                    milvus_manager.CONTENT_FIELD,
+                    milvus_manager.METADATA_FIELD,
+                ],
+            )
+            first_hits = next(iter(cast(Any, results)), [])
+            docs = self._hits_to_documents(first_hits)
+            logger.debug(
+                f"Milvus 混合检索完成: query='{query}', ranker={config.milvus_hybrid_ranker}, "
+                f"结果数={len(docs)}"
+            )
+            return docs
+        except Exception as e:
+            logger.error(f"Milvus 混合检索失败: {e}")
+            return []
 
     def similarity_search(self, query: str, k: int = 3) -> list[Document]:
-        """
-        相似度搜索
+        """兼容旧调用名；实际统一走 Milvus 原生混合检索。"""
+        return self.hybrid_search(query, k=k)
 
-        Args:
-            query: 查询文本
-            k: 返回结果数量
+    def _get_collection(self):
+        _ = milvus_manager.connect()
+        return milvus_manager.get_collection()
 
-        Returns:
-            List[Document]: 相关文档列表
-        """
-        try:
-            docs = self._ensure_vector_store().similarity_search(query, k=k)
-            logger.debug(f"相似度搜索完成: query='{query}', 结果数={len(docs)}")
-            return cast(list[Document], docs)
-        except Exception as e:
-            logger.error(f"相似度搜索失败: {e}")
-            return []
+    def _build_ranker(self):
+        if config.milvus_hybrid_ranker == "rrf":
+            return RRFRanker()
+        return WeightedRanker(
+            config.milvus_dense_weight,
+            config.milvus_sparse_weight,
+        )
+
+    def _hits_to_documents(self, hits: Any) -> list[Document]:
+        docs: list[Document] = []
+        for hit in hits:
+            entity = hit.entity
+            content = entity.get(milvus_manager.CONTENT_FIELD)
+            metadata = entity.get(milvus_manager.METADATA_FIELD) or {}
+            if not isinstance(metadata, dict):
+                metadata = {"_raw_metadata": metadata}
+            metadata = dict(metadata)
+            metadata["_milvus_id"] = str(hit.id)
+            metadata["_score"] = float(hit.score)
+            docs.append(Document(page_content=content or "", metadata=metadata))
+        return docs
 
 
 # 全局单例

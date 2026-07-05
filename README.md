@@ -1,11 +1,11 @@
 # Lab Agent
 
-Lab Agent 是一个面向实验室端到端视频传输场景的智能运维与知识服务原型，集成 RAG 知识库、多轮对话、流式输出和 AIOps 分步诊断。
+Lab Agent 是一个面向实验室场景的智能运维与知识服务原型，集成 RAG 知识库、多轮对话、流式输出和 AIOps 分步诊断。
 
 ## 主要能力
 
 - RAG 知识问答：上传 Markdown/TXT 文档，自动切分、向量化并写入 Milvus。
-- 检索重排：Milvus 宽召回后使用 FlashRank 本地重排；失败时自动降级。
+- 混合检索重排：PyMilvus 原生 `hybrid_search` 同时使用 dense 向量和 BM25 sparse 检索，宽召回后用 FlashRank 本地重排；失败时自动降级。
 - 多轮对话：支持普通响应和 SSE 流式响应。
 - AIOps 诊断：通过 Plan-Execute-Replan 工作流调用日志、监控和知识库工具。
 - MCP 集成：提供腾讯云 CLS 日志查询、TMP PromQL 和 Alertmanager 的 HTTP/stdio 入口。
@@ -95,6 +95,12 @@ RAG_TOP_K=3
 RAG_FETCH_K=20
 RAG_RERANK_ENABLED=true
 RAG_FLASHRANK_MAX_LENGTH=512
+
+MILVUS_METRIC_TYPE=COSINE
+MILVUS_HYBRID_RANKER=weighted
+MILVUS_DENSE_WEIGHT=0.7
+MILVUS_SPARSE_WEIGHT=0.3
+MILVUS_SPARSE_DROP_RATIO_SEARCH=0.2
 
 CHUNK_MAX_SIZE=800
 CHUNK_OVERLAP=100
@@ -223,43 +229,190 @@ POST https://<public-host>/api/aiops/webhook/cls?token=<AIOPS_WEBHOOK_TOKEN>
 
 持续循环演示需显式设置 `--cycles 0`。`local-mock` 模式每轮都会调用模型生成报告，持续运行会产生模型和 CLS 用量费用。
 
+## Agent 流程
+
+### ReAct RAG Agent
+
+普通问答由 `app/services/rag_agent_service.py` 提供，使用 `langchain.agents.create_agent` 创建 ReAct 风格工具调用 Agent。Agent 维护会话级 `thread_id`，通过 `MemorySaver` 保存多轮上下文；工具列表由本地工具和 MCP 工具合并而来。
+
+```text
+用户问题
+  ↓
+FastAPI /api/chat 或 /api/chat_stream
+  ↓
+RagAgentService 初始化 ChatQwen、MemorySaver、本地工具和 MCP 工具
+  ↓
+LLM 根据系统提示判断是否需要工具
+  ├─ retrieve_knowledge：Milvus 原生 hybrid_search 宽召回 → FlashRank 重排 → 返回参考上下文
+  ├─ get_current_time：返回当前时间
+  ├─ Tavily 搜索：仅配置 TAVILY_API_KEY 后启用
+  └─ MCP 工具：CLS 日志、TMP/Prometheus 指标、Alertmanager 告警等
+  ↓
+LLM 基于工具结果继续推理，可再次调用工具
+  ↓
+生成最终回答；流式接口以 SSE 输出 content/tool_call/complete/error 事件
+```
+
+知识检索链路：
+
+```text
+用户 query
+  ↓
+DashScope text-embedding-v4 生成 1024 维 dense vector
+  ↓
+Milvus BM25 Function 基于 content 生成 sparse query
+  ↓
+PyMilvus Collection.hybrid_search(dense + sparse)
+  ↓
+WeightedRanker 或 RRFRanker 融合
+  ↓
+FlashRank Cross-Encoder 精排
+  ↓
+格式化为带来源的参考资料交给 Qwen
+```
+
+### Plan-Execute-RePlan AIOps Agent
+
+AIOps 诊断由 `app/services/aiops_service.py` 构建 LangGraph 状态图，核心节点在 `app/agent/aiops/` 下。它不是一次性 ReAct 对话，而是显式拆成“规划、执行、评估/重规划”三个阶段，适合需要多工具、多证据链的故障诊断。
+
+```text
+告警输入 / 主动拉取 Alertmanager
+  ↓
+AIOpsService.diagnose 标准化告警、数据源模式和回看窗口
+  ↓
+planner
+  ├─ 先调用 retrieve_knowledge 检索内部排障经验
+  ├─ 拉取本地工具与 MCP 工具清单
+  └─ ChatQwen 生成 4-6 步结构化计划
+  ↓
+executor
+  ├─ 取当前计划第 1 步
+  ├─ 绑定本地工具和 MCP 工具
+  ├─ 最多 4 轮工具调用，收集日志、指标、知识库和时间证据
+  └─ 写入 past_steps 与 evidence，移除已执行步骤
+  ↓
+replanner
+  ├─ 判断信息是否足够
+  ├─ continue：继续执行剩余步骤
+  ├─ replan：替换剩余计划
+  └─ respond：生成最终 Markdown 诊断报告
+  ↓
+SSE 输出 plan/step_complete/status/report/complete 事件
+```
+
 ## 项目结构
 
 ```text
-super_biz_agent_py/
-├── app/
-│   ├── agent/                 # AIOps 工作流与 MCP 客户端
-│   ├── api/                   # FastAPI 路由
-│   ├── core/                  # LLM 与 Milvus 基础组件
-│   ├── models/                # 请求、响应和业务模型
-│   ├── services/              # RAG、重排、索引和搜索服务
-│   ├── tools/                 # 知识库、时间和 Tavily 工具
-│   ├── config.py              # 默认配置
-│   └── main.py                # 应用入口
-├── aiops-docs/                # 内置运维知识文档
-├── docs/                      # 项目说明和图片
-├── mcp_servers/               # CLS/Monitor HTTP 与 stdio 服务入口
-├── static/                    # Web 页面、样式和脚本
-├── uploads/                   # 运行时上传目录，已被 Git 忽略
-├── volumes/                   # Milvus 持久化数据，已被 Git 忽略
-├── Makefile                   # Linux/macOS 自动化命令
-├── start-windows.bat          # Windows 一键启动脚本
-├── stop-windows.bat           # Windows 一键停止脚本
-├── vector-database.yml        # Milvus Docker Compose 配置
-├── .pre-commit-config.yaml    # 可选的 Git 提交前检查配置
-├── pyproject.toml             # Python 项目及工具配置
-└── uv.lock                    # 锁定后的依赖版本
+lab agent/
+├── app/                         # FastAPI 应用、Agent、业务服务和工具
+│   ├── agent/
+│   │   ├── __init__.py          # Agent 包标记
+│   │   ├── mcp_client.py        # MCP 客户端创建、工具加载和重试拦截器
+│   │   └── aiops/
+│   │       ├── __init__.py      # 导出 PlanExecuteState、planner、executor、replanner
+│   │       ├── state.py         # Plan-Execute-RePlan 状态定义
+│   │       ├── planner.py       # 诊断计划生成节点
+│   │       ├── executor.py      # 单步执行节点，绑定工具并收集 evidence
+│   │       ├── replanner.py     # 继续、重规划或生成最终报告的决策节点
+│   │       └── utils.py         # 工具描述格式化辅助函数
+│   ├── api/
+│   │   ├── __init__.py          # API 包标记
+│   │   ├── chat.py              # 普通聊天、流式聊天、会话清理和会话查询接口
+│   │   ├── file.py              # 文档上传和目录索引接口
+│   │   ├── health.py            # FastAPI 与 Milvus 健康检查接口
+│   │   └── aiops.py             # AIOps 诊断、CLS webhook、事件和报告接口
+│   ├── core/
+│   │   ├── __init__.py          # Core 包标记
+│   │   ├── llm_factory.py       # ChatOpenAI 兼容模型工厂
+│   │   └── milvus_client.py     # PyMilvus 连接、hybrid schema、索引和 collection 生命周期
+│   ├── models/
+│   │   ├── __init__.py          # Models 包标记
+│   │   ├── request.py           # Chat/Clear 请求模型
+│   │   ├── response.py          # 通用 API 响应和会话信息模型
+│   │   ├── document.py          # 文档上传/索引结果模型
+│   │   └── aiops.py             # AIOps 请求、事件、告警和报告模型
+│   ├── services/
+│   │   ├── __init__.py          # Services 包标记
+│   │   ├── rag_agent_service.py # ReAct RAG Agent，负责对话、工具调用和 SSE 输出
+│   │   ├── aiops_service.py     # LangGraph Plan-Execute-RePlan 诊断编排
+│   │   ├── document_splitter_service.py # Markdown/TXT 切分与元数据生成
+│   │   ├── vector_embedding_service.py  # DashScope text-embedding-v4 LangChain Embeddings 实现
+│   │   ├── vector_store_manager.py      # 唯一 Milvus 原生写入与 hybrid_search 检索入口
+│   │   ├── vector_index_service.py      # 文件读取、旧分片删除、切分和入库
+│   │   ├── rerank_service.py     # FlashRank Cross-Encoder 精排与失败降级
+│   │   └── incident_service.py   # AIOps 事件、Markdown 报告和报告文件管理
+│   ├── tools/
+│   │   ├── __init__.py          # 导出本地工具，并按配置追加 Tavily
+│   │   ├── knowledge_tool.py    # retrieve_knowledge 工具，调用 Milvus hybrid 检索和 FlashRank
+│   │   ├── time_tool.py         # 当前时间工具
+│   │   └── tavily_search_tool.py # 可选 Tavily 联网搜索工具
+│   ├── utils/
+│   │   ├── __init__.py          # Utils 包标记
+│   │   └── logger.py            # Loguru 日志格式和输出配置
+│   ├── __init__.py              # app 包标记
+│   ├── config.py                # Pydantic Settings 配置中心，读取 .env/.env.real
+│   ├── config_real.py           # 真实环境配置兼容入口
+│   └── main.py                  # FastAPI 应用入口、路由注册、静态资源挂载和生命周期
+├── mcp_servers/
+│   ├── README.md                # MCP 服务说明
+│   ├── __init__.py              # MCP 包标记
+│   ├── aiops_common.py          # CLS/TMP/AIOps 共享配置、Mock 标识和资源映射
+│   ├── cls_server.py            # CLS 日志查询 Streamable HTTP MCP 服务
+│   ├── cls_stdio.py             # CLS 日志查询 stdio MCP 服务
+│   ├── monitor_server.py        # 监控指标、Alertmanager Streamable HTTP MCP 服务
+│   └── monitor_stdio.py         # 监控指标、Alertmanager stdio MCP 服务
+├── scripts/
+│   ├── __init__.py              # Scripts 包标记
+│   ├── upload_cls_test_logs.py  # 向腾讯云 CLS 上传演示日志
+│   └── run_aiops_demo.py        # 生成日志、触发回调并运行 AIOps 闭环演示
+├── static/
+│   ├── index.html               # Web 主界面
+│   ├── app.js                   # 前端交互、聊天、上传和 AIOps 演示逻辑
+│   ├── styles.css               # 主界面样式
+│   └── project-flow.html        # 项目架构和流程可视化页面
+├── tests/
+│   ├── test_aiops_common.py     # AIOps 共享逻辑测试
+│   ├── test_aiops_mcp_tools.py  # MCP 工具行为测试
+│   ├── test_aiops_models.py     # AIOps Pydantic 模型测试
+│   ├── test_aiops_service.py    # Plan-Execute-RePlan 服务测试
+│   ├── test_aiops_webhook.py    # CLS webhook 与事件接口测试
+│   └── test_cls_upload.py       # CLS 日志上传脚本测试
+├── aiops-docs/
+│   ├── cpu_high_usage.md        # CPU 高使用率排障知识
+│   ├── memory_high_usage.md     # 内存高使用率排障知识
+│   ├── disk_high_usage.md       # 磁盘空间高使用率排障知识
+│   ├── service_unavailable.md   # 服务不可用排障知识
+│   └── slow_response.md         # 响应慢排障知识
+├── uploads/                     # 运行时上传目录，已被 Git 忽略
+├── volumes/                     # Milvus/MinIO/etcd 持久化数据，已被 Git 忽略
+├── runtime/                     # 运行时 AIOps 报告目录，已被 Git 忽略
+├── logs/                        # Loguru 运行日志，已被 Git 忽略
+├── htmlcov/                     # pytest-cov HTML 覆盖率报告，已被 Git 忽略
+├── .env                         # 本地环境变量，已被 Git 忽略
+├── .env.real.example            # 真实 CLS/TMP/Alertmanager 配置示例
+├── .gitignore                   # Git 忽略规则
+├── .pre-commit-config.yaml      # Ruff、Black、isort、Bandit 等提交前检查
+├── .python-version              # 本地 Python 版本提示
+├── .uvignore                    # uv 构建/同步忽略规则
+├── aiops-resources.yml          # 服务到 CLS Topic、CQL、PromQL 的资源映射
+├── Makefile                     # Linux/macOS 自动化启动、停止、检查和上传命令
+├── pyproject.toml               # Python 项目元数据、依赖和工具配置
+├── pyrightconfig.json           # Pyright/Pylance 类型检查配置
+├── README.md                    # 项目说明文档
+├── uv.lock                      # uv 锁定依赖版本
+└── vector-database.yml          # Milvus、etcd、MinIO、Attu Docker Compose 配置
 ```
 
-## `.bat`、`.yml` 和 `.yaml` 文件说明
+运行时可能还会生成 `server.log`、`mcp_cls.log`、`mcp_monitor.log`、`.venv/`、`.pytest_cache/`、`.ruff_cache/`、`.mypy_cache/`、`super_biz_agent_py.egg-info/` 等本地文件或缓存目录，它们不属于核心源码。
+
+## `.yml` 和 `.yaml` 文件说明
 
 `.yml` 与 `.yaml` 是同一种 YAML 格式，只是扩展名写法不同。本项目中的相关文件均有明确用途：
 
 | 文件 | 用途 | 是否保留 |
 |------|------|----------|
-| `start-windows.bat` | Windows 下创建环境并启动 Milvus、MCP、FastAPI，随后上传知识文档 | 支持 Windows 时保留 |
-| `stop-windows.bat` | Windows 下停止应用服务和 Docker Compose 服务 | 支持 Windows 时保留 |
-| `vector-database.yml` | 定义 Milvus、etcd、MinIO 和 Attu 容器；Makefile 和 Windows 脚本都会使用 | 必须保留 |
+| `vector-database.yml` | 定义 Milvus、etcd、MinIO 和 Attu 容器；Makefile 会使用它启停向量数据库 | 必须保留 |
+| `aiops-resources.yml` | 维护服务名到 CLS Topic、CQL、PromQL 的映射，供 AIOps 工具解析资源 | 必须保留 |
 | `.pre-commit-config.yaml` | 配置 Ruff、Black、isort、Bandit 等提交前检查 | 运行应用不需要，但建议保留 |
 
 启用提交前检查：
@@ -270,7 +423,7 @@ make pre-commit-install
 make pre-commit
 ```
 
-如果项目明确不再支持 Windows，两个 `.bat` 文件及 README 中的 Windows 章节才可以一起删除。其余两个 YAML 文件不属于冗余文件。
+当前仓库没有 Windows `.bat` 启停脚本；日常启动统一使用 Makefile 和 Docker Compose。
 
 ## 开发与检查
 
@@ -281,7 +434,7 @@ make type-check
 make test
 ```
 
-当前仓库尚未提供 `tests/` 测试目录，因此 `make test` 需要在补充测试后使用。
+当前仓库已包含 AIOps 与 MCP 相关测试，也可以直接运行 `uv run python -m pytest`。
 
 ## 常见问题
 
@@ -306,13 +459,12 @@ tail -f mcp_monitor.log
 
 ### FlashRank 首次运行较慢
 
-FlashRank 首次重排可能需要准备本地模型。设置 `RAG_RERANK_ENABLED=false` 可关闭重排并退回普通向量检索。
+FlashRank 首次重排可能需要准备本地模型。设置 `RAG_RERANK_ENABLED=false` 可关闭精排，直接使用 Milvus 原生 hybrid_search 的融合结果。
 
 ## 更多文档
 
-- [项目场景介绍](docs/project-intro.md)
 - [MCP 服务说明](mcp_servers/README.md)
-- [变更记录](CHANGELOG.md)
+- 项目流程可视化页面：启动服务后访问 <http://localhost:9900/project-flow>
 
 ## License
 

@@ -6,39 +6,15 @@ from pymilvus import (
     CollectionSchema,
     DataType,
     FieldSchema,
+    Function,
+    FunctionType,
     MilvusClient,
+    MilvusException,
     connections,
     utility,
-    MilvusException,
 )
 
 from app.config import config
-
-
-def _patch_pymilvus_milvus_client_orm_alias() -> None:
-    """
-    langchain_milvus 内部创建的 MilvusClient 会将 _using 设为 ``cm-{id}``，
-    该别名未在 pymilvus.orm.connections 中注册；随后 ORM ``Collection(..., using=...)``
-    会抛出 ConnectionNotExistException: should create connection first.
-
-    在已通过 ``connections.connect(alias="default", ...)`` 建立连接后，
-    强制让 MilvusClient 使用 ``default`` 别名，与 ORM 一致。
-    """
-    if getattr(_patch_pymilvus_milvus_client_orm_alias, "_done", False):
-        return
-    try:
-        from pymilvus.milvus_client.milvus_client import MilvusClient
-    except ImportError:
-        return
-
-    _orig_init = MilvusClient.__init__
-
-    def _wrapped_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        _orig_init(self, *args, **kwargs)
-        self._using = "default"
-
-    MilvusClient.__init__ = _wrapped_init  # type: ignore[method-assign]
-    setattr(_patch_pymilvus_milvus_client_orm_alias, "_done", True)
 
 
 class MilvusClientManager:
@@ -46,6 +22,12 @@ class MilvusClientManager:
 
     # 常量定义
     COLLECTION_NAME: str = "biz"
+    PRIMARY_FIELD: str = "id"
+    DENSE_VECTOR_FIELD: str = "vector"
+    SPARSE_VECTOR_FIELD: str = "sparse_vector"
+    CONTENT_FIELD: str = "content"
+    METADATA_FIELD: str = "metadata"
+    BM25_FUNCTION_NAME: str = "content_bm25"
     VECTOR_DIM: int = 1024  # 统一使用 1024 维
     ID_MAX_LENGTH: int = 100
     CONTENT_MAX_LENGTH: int = 8000
@@ -66,14 +48,12 @@ class MilvusClientManager:
         Raises:
             RuntimeError: 连接或初始化失败时抛出
         """
-        # 幂等：导入阶段可能已由 VectorStoreManager 等提前连接，避免重复初始化
+        # 幂等：导入阶段可能已由检索服务提前连接，避免重复初始化
         if self._collection is not None and self._client is not None:
             logger.debug("Milvus 已连接，跳过重复 connect")
             return self._client
 
         try:
-            _patch_pymilvus_milvus_client_orm_alias()
-
             logger.info(f"正在连接到 Milvus: {config.milvus_host}:{config.milvus_port}")
 
             # 建立连接
@@ -98,35 +78,16 @@ class MilvusClientManager:
             else:
                 logger.info(f"collection '{self.COLLECTION_NAME}' 已存在")
                 self._collection = Collection(self.COLLECTION_NAME)
-                
-                # 检查向量维度是否匹配
-                schema = self._collection.schema
-                vector_field = None
-                existing_dim = None
-                for field in schema.fields:
-                    if field.name == "vector":
-                        vector_field = field
-                        break
-                
-                recreated = False
-                if vector_field and hasattr(vector_field, 'params') and 'dim' in vector_field.params:
-                    existing_dim = vector_field.params['dim']
-                    if existing_dim != self.VECTOR_DIM:
-                        logger.warning(
-                            f"检测到向量维度不匹配！当前 collection 维度: {existing_dim}, 配置维度: {self.VECTOR_DIM}"
-                        )
-                        logger.info(f"正在删除旧 collection '{self.COLLECTION_NAME}'...")
-                        _ = utility.drop_collection(self.COLLECTION_NAME)
-                        logger.info(f"正在重新创建 collection '{self.COLLECTION_NAME}'...")
-                        self._create_collection()
-                        logger.info(f"成功重新创建 collection，维度: {self.VECTOR_DIM}")
-                        recreated = True
-                    else:
-                        logger.info(f"向量维度匹配: {self.VECTOR_DIM}")
-
-                # 维度未触发重建时，校验索引 metric 是否与配置一致（不一致则重建索引）
-                if not recreated:
-                    self._ensure_index_metric()
+                if self._schema_requires_recreate():
+                    logger.warning(
+                        f"collection '{self.COLLECTION_NAME}' schema 与原生混合检索不兼容，"
+                        "正在重建。请在启动后重新上传知识库文档。"
+                    )
+                    _ = utility.drop_collection(self.COLLECTION_NAME)
+                    self._create_collection()
+                    logger.info(f"成功重建 collection '{self.COLLECTION_NAME}'")
+                else:
+                    self._ensure_indexes()
 
             # 加载 collection
             self._load_collection()
@@ -153,36 +114,48 @@ class MilvusClientManager:
         return bool(result)  # type: ignore[arg-type]
 
     def _create_collection(self) -> None:
-        """创建 biz collection"""
+        """创建支持 dense + BM25 sparse 混合检索的 biz collection"""
         # 定义字段
         fields = [
             FieldSchema(
-                name="id",
+                name=self.PRIMARY_FIELD,
                 dtype=DataType.VARCHAR,
                 max_length=self.ID_MAX_LENGTH,
                 is_primary=True,
             ),
             FieldSchema(
-                name="vector",
+                name=self.DENSE_VECTOR_FIELD,
                 dtype=DataType.FLOAT_VECTOR,
                 dim=self.VECTOR_DIM,
             ),
             FieldSchema(
-                name="content",
-                dtype=DataType.VARCHAR,
-                max_length=self.CONTENT_MAX_LENGTH,
+                name=self.SPARSE_VECTOR_FIELD,
+                dtype=DataType.SPARSE_FLOAT_VECTOR,
             ),
             FieldSchema(
-                name="metadata",
+                name=self.CONTENT_FIELD,
+                dtype=DataType.VARCHAR,
+                max_length=self.CONTENT_MAX_LENGTH,
+                enable_analyzer=True,
+            ),
+            FieldSchema(
+                name=self.METADATA_FIELD,
                 dtype=DataType.JSON,
             ),
         ]
+        bm25_function = Function(
+            name=self.BM25_FUNCTION_NAME,
+            input_field_names=[self.CONTENT_FIELD],
+            output_field_names=[self.SPARSE_VECTOR_FIELD],
+            function_type=FunctionType.BM25,
+        )
 
         # 创建 schema
         schema = CollectionSchema(
             fields=fields,
             description="Business knowledge collection",
             enable_dynamic_field=False,
+            functions=[bm25_function],
         )
 
         # 创建 collection
@@ -193,68 +166,137 @@ class MilvusClientManager:
         )
 
         # 创建索引
-        self._create_index()
+        self._create_indexes()
 
-    def _create_index(self) -> None:
-        """为 vector 字段创建索引"""
+    def _create_indexes(self) -> None:
+        """为 dense vector 和 BM25 sparse vector 创建索引"""
         if self._collection is None:
             raise RuntimeError("Collection 未初始化")
 
-        index_params = {
+        dense_index_params = {
             "metric_type": config.milvus_metric_type.upper(),  # COSINE / L2 / IP
             "index_type": "IVF_FLAT",
             "params": {"nlist": 128},
         }
-
         _ = self._collection.create_index(
-            field_name="vector",
-            index_params=index_params,
+            field_name=self.DENSE_VECTOR_FIELD,
+            index_params=dense_index_params,
         )
-
         logger.info(
-            f"成功为 vector 字段创建索引 (metric={config.milvus_metric_type.upper()})"
+            f"成功为 {self.DENSE_VECTOR_FIELD} 字段创建索引 "
+            f"(metric={config.milvus_metric_type.upper()})"
         )
 
-    def _ensure_index_metric(self) -> None:
-        """确保 vector 索引的 metric_type 与配置一致，不一致则重建索引（无需重新灌库）。
+        sparse_index_params = {
+            "metric_type": "BM25",
+            "index_type": "SPARSE_INVERTED_INDEX",
+            "params": {
+                "inverted_index_algo": "DAAT_MAXSCORE",
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+            },
+        }
+        _ = self._collection.create_index(
+            field_name=self.SPARSE_VECTOR_FIELD,
+            index_params=sparse_index_params,
+        )
+        logger.info(f"成功为 {self.SPARSE_VECTOR_FIELD} 字段创建 BM25 稀疏索引")
 
-        余弦 / L2 仅是检索时的距离度量，向量数据本身不变，因此只需重建索引而非重新嵌入。
-        重建前必须先 release collection，否则 Milvus 不允许修改索引。
-        """
+    def _schema_requires_recreate(self) -> bool:
+        """检查现有 collection 是否满足原生混合检索 schema。"""
+        if self._collection is None:
+            return True
+
+        fields = {field.name: field for field in self._collection.schema.fields}
+        required_fields = {
+            self.PRIMARY_FIELD,
+            self.DENSE_VECTOR_FIELD,
+            self.SPARSE_VECTOR_FIELD,
+            self.CONTENT_FIELD,
+            self.METADATA_FIELD,
+        }
+        missing = required_fields.difference(fields)
+        if missing:
+            logger.warning(f"Milvus schema 缺少字段: {sorted(missing)}")
+            return True
+
+        dense_field = fields[self.DENSE_VECTOR_FIELD]
+        if dense_field.dtype != DataType.FLOAT_VECTOR:
+            logger.warning(f"{self.DENSE_VECTOR_FIELD} 字段类型不是 FLOAT_VECTOR")
+            return True
+        existing_dim = getattr(dense_field, "params", {}).get("dim")
+        if existing_dim != self.VECTOR_DIM:
+            logger.warning(
+                f"检测到向量维度不匹配！当前: {existing_dim}, 配置: {self.VECTOR_DIM}"
+            )
+            return True
+
+        sparse_field = fields[self.SPARSE_VECTOR_FIELD]
+        if sparse_field.dtype != DataType.SPARSE_FLOAT_VECTOR:
+            logger.warning(f"{self.SPARSE_VECTOR_FIELD} 字段类型不是 SPARSE_FLOAT_VECTOR")
+            return True
+
+        content_field = fields[self.CONTENT_FIELD]
+        if content_field.dtype != DataType.VARCHAR:
+            logger.warning(f"{self.CONTENT_FIELD} 字段类型不是 VARCHAR")
+            return True
+        if not getattr(content_field, "params", {}).get("enable_analyzer"):
+            logger.warning(f"{self.CONTENT_FIELD} 字段未启用 analyzer，无法支持 BM25")
+            return True
+
+        functions = getattr(self._collection.schema, "functions", []) or []
+        has_bm25 = any(
+            function.get("name") == self.BM25_FUNCTION_NAME
+            and str(function.get("type")).upper().endswith("BM25")
+            and function.get("input_field_names") == [self.CONTENT_FIELD]
+            and function.get("output_field_names") == [self.SPARSE_VECTOR_FIELD]
+            for function in functions
+        )
+        if not has_bm25:
+            logger.warning("Milvus schema 缺少 content -> sparse_vector 的 BM25 Function")
+            return True
+
+        logger.info("Milvus hybrid search schema 匹配")
+        return False
+
+    def _ensure_indexes(self) -> None:
+        """确保 dense 和 sparse 索引存在且 metric 与配置一致。"""
         if self._collection is None:
             return
 
-        desired = config.milvus_metric_type.upper()
+        desired_dense_metric = config.milvus_metric_type.upper()
+        desired = {
+            self.DENSE_VECTOR_FIELD: desired_dense_metric,
+            self.SPARSE_VECTOR_FIELD: "BM25",
+        }
 
         try:
-            current = None
+            current: dict[str, str] = {}
             for idx in self._collection.indexes:
-                if idx.field_name == "vector":
-                    current = (idx.params or {}).get("metric_type")
-                    break
+                field_name = idx.field_name
+                if field_name in desired:
+                    current[field_name] = str((idx.params or {}).get("metric_type", "")).upper()
         except Exception as e:
             logger.warning(f"读取现有索引信息失败，跳过 metric 校验: {e}")
             return
 
-        if current is None:
-            logger.info("vector 字段尚无索引，正在创建...")
-            self._create_index()
-            return
-
-        if str(current).upper() == desired:
-            logger.info(f"向量索引 metric 匹配: {desired}")
+        if current == desired:
+            logger.info(
+                f"向量索引 metric 匹配: dense={desired_dense_metric}, sparse=BM25"
+            )
             return
 
         logger.warning(
-            f"检测到向量索引 metric 不匹配！当前: {current}, 配置: {desired}，正在重建索引..."
+            f"检测到向量索引不完整或 metric 不匹配！当前: {current}, 期望: {desired}，"
+            "正在重建索引..."
         )
         try:
             self._collection.release()
         except Exception:
             pass
         self._collection.drop_index()
-        self._create_index()
-        logger.info(f"成功重建向量索引，metric: {desired}")
+        self._create_indexes()
+        logger.info("成功重建 dense+sparse 向量索引")
 
     def _load_collection(self) -> None:
         """加载 collection 到内存"""
@@ -326,7 +368,7 @@ class MilvusClientManager:
     def close(self) -> None:
         """关闭连接"""
         errors = []
-        
+
         try:
             if self._collection is not None:
                 self._collection.release()
@@ -341,7 +383,7 @@ class MilvusClientManager:
             errors.append(f"断开连接失败: {e}")
 
         self._client = None
-        
+
         if errors:
             error_msg = "; ".join(errors)
             logger.error(f"关闭 Milvus 连接时出现错误: {error_msg}")

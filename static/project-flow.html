@@ -952,10 +952,10 @@
                         <article class="module-card">
                             <header><h3>Milvus 连接与 Schema</h3><span class="module-path">app/core/milvus_client.py</span></header>
                             <div class="module-body">
-                                <div class="fact"><b>Schema</b><span>biz Collection 包含 id、1024 维 vector、content、JSON metadata，默认 2 shards。</span></div>
-                                <div class="fact"><b>启动</b><span>检查 Collection，不存在则创建；存在但向量维度不匹配时会删除并重建。</span></div>
-                                <div class="fact"><b>兼容</b><span>补丁把 langchain_milvus 创建的 MilvusClient ORM alias 统一到 default，处理连接别名不一致问题。</span></div>
-                                <div class="fact answer"><b>风险</b><span>维度不匹配直接 drop Collection 会丢数据；生产要迁移到新 Collection，再原子切换 alias。</span></div>
+                                <div class="fact"><b>Schema</b><span>biz Collection 包含 id、1024 维 vector、BM25 sparse_vector、content、JSON metadata，默认 2 shards。</span></div>
+                                <div class="fact"><b>启动</b><span>检查 Collection，不存在则创建；存在但缺少混合检索字段或 BM25 Function 时会删除并重建。</span></div>
+                                <div class="fact"><b>检索</b><span>content 开启 analyzer，并由 Milvus BM25 Function 自动生成 sparse_vector。</span></div>
+                                <div class="fact answer"><b>风险</b><span>Schema 不匹配直接 drop Collection 会丢数据；生产要迁移到新 Collection，再原子切换 alias。</span></div>
                             </div>
                         </article>
 
@@ -1033,8 +1033,8 @@
                             <header><h3>统一模型与检索主链</h3><span class="module-path">rag_agent_service.py · vector_store_manager.py</span></header>
                             <div class="module-body">
                                 <div class="fact"><b>LLM</b><span>RAG 与 AIOps 统一使用 ChatQwen，直接支持结构化输出、工具调用和流式响应。</span></div>
-                                <div class="fact"><b>检索</b><span>知识检索统一使用 langchain_milvus VectorStore 宽召回，再由 FlashRank 重排。</span></div>
-                                <div class="fact"><b>边界</b><span>MilvusClient 负责连接和 Collection 生命周期，VectorStoreManager 负责 LangChain 检索接口。</span></div>
+                                <div class="fact"><b>检索</b><span>知识检索统一使用 PyMilvus 原生 hybrid_search 宽召回，再由 FlashRank 重排。</span></div>
+                                <div class="fact"><b>边界</b><span>MilvusClient 负责连接和 Collection 生命周期，VectorStoreManager 负责原生 Milvus 写入与混合检索。</span></div>
                                 <div class="fact answer"><b>收益</b><span>删除未使用的模型工厂和底层 L2 搜索旧路径，避免参数、距离语义和异常处理分叉。</span></div>
                             </div>
                         </article>
@@ -1095,7 +1095,7 @@
 
                             <details class="qa" data-category="architecture"><summary>19. 为什么统一使用 ChatQwen？</summary><div class="qa-answer"><p class="speak">当前 RAG 与 AIOps 都依赖通义模型的结构化输出、工具调用和流式能力。统一模型客户端可以减少两套参数、回调和异常语义；未来需要多供应商时，再基于明确的能力接口扩展。</p></div></details>
 
-                            <details class="qa" data-category="rag"><summary>20. 当前向量检索链路是什么？</summary><div class="qa-answer"><p class="speak">查询先由 DashScope Embedding 向量化，通过 langchain_milvus Retriever 在 Milvus 宽召回，再用 FlashRank 本地重排并截取 top-k。项目只保留这一条检索主链。</p></div></details>
+                            <details class="qa" data-category="rag"><summary>20. 当前向量检索链路是什么？</summary><div class="qa-answer"><p class="speak">查询先由 DashScope Embedding 向量化，同时用 Milvus BM25 Function 做 sparse 关键词检索，通过 PyMilvus 原生 hybrid_search 宽召回，再用 FlashRank 本地重排并截取 top-k。项目只保留这一条检索主链。</p></div></details>
                         </div>
                     </div>
                 </section>
