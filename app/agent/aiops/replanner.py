@@ -131,15 +131,16 @@ async def replanner(state: PlanExecuteState) -> dict[str, Any]:
     past_steps = state.get("past_steps", [])
     replan_attempts = state.get("replan_attempts", 0)
     no_progress_rounds = state.get("no_progress_rounds", 0)
+    boundary = config.aiops_boundary
 
     logger.info(f"剩余计划步骤: {len(plan)}")
     logger.info(f"已执行步骤: {len(past_steps)}")
 
     # ⚠️ 强制限制：如果已执行步骤过多，直接生成响应
-    if len(past_steps) >= config.aiops_max_execution_steps:
+    if len(past_steps) >= boundary.max_execution_steps:
         logger.warning(
             f"已执行 {len(past_steps)} 个步骤，超过最大限制 "
-            f"{config.aiops_max_execution_steps}，强制生成最终响应"
+            f"{boundary.max_execution_steps}，强制生成最终响应"
         )
         llm = ChatQwen(
             model=config.rag_model,
@@ -149,8 +150,8 @@ async def replanner(state: PlanExecuteState) -> dict[str, Any]:
         return await _generate_response(state, llm)
 
     if (
-        replan_attempts >= config.aiops_replanner_max_replans
-        or no_progress_rounds >= config.aiops_replanner_max_no_progress_rounds
+        replan_attempts >= boundary.max_replans
+        or no_progress_rounds >= boundary.max_no_progress_rounds
     ):
         logger.warning(
             "Replanner 触发空转保护: "

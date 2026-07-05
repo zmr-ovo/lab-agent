@@ -4,14 +4,20 @@
 支持真正的流式输出和更好的模型适配。
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import SummarizationMiddleware
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    SummarizationMiddleware,
+    ToolCallLimitMiddleware,
+)
 from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
+    ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
 from langchain_qwq import ChatQwen
@@ -26,6 +32,33 @@ from app.tools import get_current_time, retrieve_knowledge, with_optional_tavily
 # 阿里千问大模型和langchain集成参考： https://docs.langchain.com/oss/python/integrations/chat/qwen
 # 注意：需要配置环境变量 DASHSCOPE_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1 否则默认访问的是新加坡站点
 # 同时也需要配置环境变量 DASHSCOPE_API_KEY=your_api_key
+
+
+class ToolTimeoutMiddleware(AgentMiddleware):
+    """为 ReAct Agent 的单个工具调用增加超时保护。"""
+
+    def __init__(self, timeout_seconds: float) -> None:
+        self.timeout_seconds = timeout_seconds
+
+    async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
+        tool_call = getattr(request, "tool_call", {}) or {}
+        tool_name = tool_call.get("name", "unknown")
+        tool_call_id = tool_call.get("id", "")
+        try:
+            return await asyncio.wait_for(handler(request), timeout=self.timeout_seconds)
+        except TimeoutError:
+            timeout_message = (
+                f"工具调用超时: `{tool_name}` 执行超过 "
+                f"{self.timeout_seconds:.1f} 秒，已跳过该工具结果。"
+            )
+            logger.warning(timeout_message)
+            return ToolMessage(
+                content=timeout_message,
+                name=tool_name,
+                tool_call_id=tool_call_id,
+                status="error",
+            )
+
 
 class RagAgentService:
     """RAG Agent 服务 - 使用 LangGraph + ChatQwen 原生集成"""
@@ -110,24 +143,34 @@ class RagAgentService:
 
     def _build_middleware(self) -> list[Any]:
         """Build middleware for the ReAct agent."""
+        boundary = config.react_boundary
+        middleware: list[Any] = [
+            ToolTimeoutMiddleware(boundary.tool_timeout_seconds),
+            ToolCallLimitMiddleware(
+                run_limit=boundary.recursion_limit,
+                exit_behavior="continue",
+            ),
+        ]
+
         if not config.rag_summary_enabled:
             logger.info("RAG Agent 历史总结中间件未启用")
-            return []
+            return middleware
 
         logger.info(
             "RAG Agent 启用 SummarizationMiddleware: "
-            f"trigger={config.rag_summary_trigger_tokens}, "
-            f"keep={config.rag_summary_keep_messages}, "
-            f"trim={config.rag_summary_trim_tokens}"
+            f"trigger={boundary.summary_trigger_tokens}, "
+            f"keep={boundary.summary_keep_messages}, "
+            f"trim={boundary.summary_trim_tokens}"
         )
-        return [
+        middleware.append(
             SummarizationMiddleware(
                 model=self.summary_model,
-                trigger=("tokens", config.rag_summary_trigger_tokens),
-                keep=("messages", config.rag_summary_keep_messages),
-                trim_tokens_to_summarize=config.rag_summary_trim_tokens,
+                trigger=("tokens", boundary.summary_trigger_tokens),
+                keep=("messages", boundary.summary_keep_messages),
+                trim_tokens_to_summarize=boundary.summary_trim_tokens,
             )
-        ]
+        )
+        return middleware
 
     def _build_system_prompt(self) -> str:
         """
@@ -191,16 +234,13 @@ class RagAgentService:
             agent_input: dict[str, list[HumanMessage]] = {"messages": messages}
 
             # 配置 thread_id（用于会话持久化）
-            config_dict: RunnableConfig = {
-                "configurable": {
-                    "thread_id": session_id
-                }
-            }
+            config_dict = self._build_runnable_config(session_id)
 
-            result = await agent.ainvoke(
-                input=agent_input,
-                config=config_dict,
-            )
+            async with asyncio.timeout(config.react_boundary.total_timeout_seconds):
+                result = await agent.ainvoke(
+                    input=agent_input,
+                    config=config_dict,
+                )
 
             # 提取最终答案
             messages_result = result.get("messages", [])
@@ -217,10 +257,19 @@ class RagAgentService:
                 return answer
 
             logger.warning(f"[会话 {session_id}] Agent 返回结果为空")
-            return ""
+            return self._fallback_answer("RAG Agent 返回结果为空。")
+
+        except TimeoutError:
+            logger.warning(
+                f"[会话 {session_id}] RAG Agent 查询超时: "
+                f"{config.react_boundary.total_timeout_seconds:.1f} 秒"
+            )
+            return self._fallback_answer("本次回答超过总耗时限制。")
 
         except Exception as e:
             logger.error(f"[会话 {session_id}] RAG Agent 查询失败（非流式）: {e}")
+            if config.react_boundary.fallback_enabled:
+                return self._fallback_answer(f"RAG Agent 执行异常: {e}")
             raise
 
     async def query_stream(
@@ -255,44 +304,76 @@ class RagAgentService:
             agent_input: dict[str, list[HumanMessage]] = {"messages": messages}
 
             # 配置 thread_id（用于会话持久化）
-            config_dict: RunnableConfig = {
-                "configurable": {
-                    "thread_id": session_id
-                }
-            }
+            config_dict = self._build_runnable_config(session_id)
 
-            async for token, metadata in agent.astream(
-                input=agent_input,
-                config=config_dict,
-                stream_mode="messages",
-            ):
-                node_name = metadata.get('langgraph_node', 'unknown') if isinstance(metadata, dict) else 'unknown'
-                message_type = type(token).__name__
+            async with asyncio.timeout(config.react_boundary.total_timeout_seconds):
+                async for token, metadata in agent.astream(
+                    input=agent_input,
+                    config=config_dict,
+                    stream_mode="messages",
+                ):
+                    node_name = (
+                        metadata.get("langgraph_node", "unknown")
+                        if isinstance(metadata, dict)
+                        else "unknown"
+                    )
+                    message_type = type(token).__name__
 
-                if message_type in ("AIMessage", "AIMessageChunk"):
-                    content_blocks = getattr(token, 'content_blocks', None)
+                    if message_type in ("AIMessage", "AIMessageChunk"):
+                        content_blocks = getattr(token, "content_blocks", None)
 
-                    if content_blocks and isinstance(content_blocks, list):
-                        for block in content_blocks:
-                            if isinstance(block, dict) and block.get('type') == 'text':
-                                text_content = block.get('text', '')
-                                if text_content:
-                                    yield {
-                                        "type": "content",
-                                        "data": text_content,
-                                        "node": node_name
-                                    }
+                        if content_blocks and isinstance(content_blocks, list):
+                            for block in content_blocks:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    text_content = block.get("text", "")
+                                    if text_content:
+                                        yield {
+                                            "type": "content",
+                                            "data": text_content,
+                                            "node": node_name,
+                                        }
 
             logger.info(f"[会话 {session_id}] RAG Agent 查询完成（流式）")
             yield {"type": "complete"}
 
+        except TimeoutError:
+            logger.warning(
+                f"[会话 {session_id}] RAG Agent 流式查询超时: "
+                f"{config.react_boundary.total_timeout_seconds:.1f} 秒"
+            )
+            fallback = self._fallback_answer("本次流式回答超过总耗时限制。")
+            yield {"type": "error", "data": fallback}
+            yield {"type": "complete", "data": {"answer": fallback, "fallback": True}}
+
         except Exception as e:
             logger.error(f"[会话 {session_id}] RAG Agent 查询失败（流式）: {e}")
+            fallback = self._fallback_answer(f"RAG Agent 流式执行异常: {e}")
             yield {
                 "type": "error",
-                "data": str(e)
+                "data": fallback if config.react_boundary.fallback_enabled else str(e),
             }
-            raise
+            if not config.react_boundary.fallback_enabled:
+                raise
+
+    @staticmethod
+    def _build_runnable_config(session_id: str) -> RunnableConfig:
+        """构建 LangGraph 运行配置。"""
+        return {
+            "configurable": {"thread_id": session_id},
+            "recursion_limit": config.react_boundary.recursion_limit,
+        }
+
+    @staticmethod
+    def _fallback_answer(reason: str) -> str:
+        """生成 ReAct Agent 兜底回答。"""
+        if not config.react_boundary.fallback_enabled:
+            return ""
+        return (
+            "抱歉，本次回答未能稳定完成。"
+            f"{reason}"
+            "可能原因是模型响应超时、工具调用失败或检索服务暂不可用。"
+            "请稍后重试，或缩小问题范围后再次提问。"
+        )
 
     def get_session_history(self, session_id: str) -> list[dict[str, Any]]:
         """

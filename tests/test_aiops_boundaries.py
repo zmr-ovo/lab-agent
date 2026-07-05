@@ -60,6 +60,24 @@ def make_service_with_graph(graph: Any) -> AIOpsService:
     return service
 
 
+def test_aiops_boundary_config_groups_common_and_specific_fields(monkeypatch):
+    monkeypatch.setattr(config, "aiops_total_timeout_seconds", 10)
+    monkeypatch.setattr(config, "aiops_tool_timeout_seconds", 2)
+    monkeypatch.setattr(config, "aiops_fallback_report_enabled", True)
+    monkeypatch.setattr(config, "aiops_max_execution_steps", 3)
+    monkeypatch.setattr(config, "aiops_replanner_max_replans", 1)
+    monkeypatch.setattr(config, "aiops_replanner_max_no_progress_rounds", 4)
+
+    boundary = config.aiops_boundary
+
+    assert boundary.total_timeout_seconds == 10
+    assert boundary.tool_timeout_seconds == 2
+    assert boundary.fallback_enabled is True
+    assert boundary.max_execution_steps == 3
+    assert boundary.max_replans == 1
+    assert boundary.max_no_progress_rounds == 4
+
+
 @pytest.mark.asyncio
 async def test_execute_total_timeout_returns_fallback_report(monkeypatch):
     monkeypatch.setattr(config, "aiops_total_timeout_seconds", 0.01)

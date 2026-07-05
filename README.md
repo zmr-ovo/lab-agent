@@ -95,6 +95,10 @@ RAG_TOP_K=3
 RAG_FETCH_K=20
 RAG_RERANK_ENABLED=true
 RAG_FLASHRANK_MAX_LENGTH=512
+RAG_TOTAL_TIMEOUT_SECONDS=120
+RAG_TOOL_TIMEOUT_SECONDS=30
+RAG_FALLBACK_ANSWER_ENABLED=true
+RAG_RECURSION_LIMIT=12
 RAG_SUMMARY_ENABLED=true
 RAG_SUMMARY_TRIGGER_TOKENS=12000
 RAG_SUMMARY_KEEP_MESSAGES=12
@@ -142,6 +146,7 @@ AIOPS_DATA_MODE=mock
 AIOPS_MAX_EXECUTION_STEPS=8
 AIOPS_TOTAL_TIMEOUT_SECONDS=180
 AIOPS_TOOL_TIMEOUT_SECONDS=30
+AIOPS_FALLBACK_REPORT_ENABLED=true
 AIOPS_REPLANNER_MAX_REPLANS=2
 AIOPS_REPLANNER_MAX_NO_PROGRESS_ROUNDS=2
 ```
@@ -242,6 +247,30 @@ POST https://<public-host>/api/aiops/webhook/cls?token=<AIOPS_WEBHOOK_TOKEN>
 
 ## Agent 流程
 
+### Agent 边界模型
+
+项目中的 ReAct RAG Agent 和 Plan-Execute-RePlan AIOps Agent 使用同一套保护理念，但按各自失败模式做差异化实现。`.env` 字段由 [`app/config.py`](app/config.py) 读取，内部边界配置结构定义在 [`app/config_models.py`](app/config_models.py)：
+
+```text
+AgentBoundaryConfig
+  ├─ total_timeout_seconds   # 单次 Agent 运行总超时
+  ├─ tool_timeout_seconds    # 单个工具调用超时
+  └─ fallback_enabled        # 超时、异常或空响应时是否输出兜底结果
+
+ReactBoundaryConfig
+  ├─ recursion_limit         # ReAct / LangGraph 单次运行递归上限
+  ├─ summary_trigger_tokens  # 触发历史总结的 token 阈值
+  ├─ summary_keep_messages   # 总结后完整保留的最近消息数
+  └─ summary_trim_tokens     # 每次送入总结模型的旧历史 token 预算
+
+AIOpsBoundaryConfig
+  ├─ max_execution_steps     # executor 最大执行步骤数
+  ├─ max_replans             # replanner 最大重规划次数
+  └─ max_no_progress_rounds  # replanner 连续空转轮数上限
+```
+
+共同边界负责“不要卡死、不要无限调用工具、失败时有结果”；ReAct Agent 重点防上下文膨胀和工具循环；AIOps Agent 重点防计划过长、重规划循环和诊断无结论。
+
 ### ReAct RAG Agent
 
 普通问答由 `app/services/rag_agent_service.py` 提供，使用 `langchain.agents.create_agent` 创建 ReAct 风格工具调用 Agent。Agent 维护会话级 `thread_id`，通过 `MemorySaver` 保存多轮上下文，并用 `SummarizationMiddleware` 压缩早期对话历史；系统提示通过 `create_agent(system_prompt=...)` 注入，不反复写入会话消息；工具列表由本地工具和 MCP 工具合并而来。
@@ -253,6 +282,8 @@ FastAPI /api/chat 或 /api/chat_stream
   ↓
 RagAgentService 初始化 ChatQwen、MemorySaver、SummarizationMiddleware、本地工具和 MCP 工具
   ↓
+应用 ReactBoundaryConfig：总超时、recursion_limit、工具调用次数限制、单工具超时、兜底回答
+  ↓
 SummarizationMiddleware 按 RAG_SUMMARY_* 配置压缩早期消息，仅保留最近上下文
   ↓
 LLM 根据系统提示判断是否需要工具
@@ -263,7 +294,8 @@ LLM 根据系统提示判断是否需要工具
   ↓
 LLM 基于工具结果继续推理，可再次调用工具
   ↓
-生成最终回答；流式接口以 SSE 输出 content/tool_call/complete/error 事件
+生成最终回答；超时、异常或空响应时按 RAG_FALLBACK_ANSWER_ENABLED 返回兜底答案；
+流式接口以 SSE 输出 content/tool_call/complete/error 事件
 ```
 
 知识检索链路：
@@ -293,6 +325,8 @@ AIOps 诊断由 `app/services/aiops_service.py` 构建 LangGraph 状态图，核
   ↓
 AIOpsService.diagnose 标准化告警、数据源模式和回看窗口
   ↓
+应用 AIOpsBoundaryConfig：总超时、工具超时、最大执行步数、重规划限制、空转保护、兜底报告
+  ↓
 planner
   ├─ 先调用 retrieve_knowledge 检索内部排障经验
   ├─ 拉取本地工具与 MCP 工具清单
@@ -312,7 +346,7 @@ replanner
   ├─ 空转保护：连续无有效计划变化达到阈值后强制收敛
   └─ respond：生成最终 Markdown 诊断报告
   ↓
-总耗时超过 AIOPS_TOTAL_TIMEOUT_SECONDS、模型空响应或异常时输出兜底 Markdown 报告
+总耗时超过 AIOPS_TOTAL_TIMEOUT_SECONDS、模型空响应或异常时按 AIOPS_FALLBACK_REPORT_ENABLED 输出兜底 Markdown 报告
   ↓
 SSE 输出 plan/step_complete/status/report/complete 事件
 ```
@@ -368,6 +402,7 @@ lab agent/
 │   │   └── logger.py            # Loguru 日志格式和输出配置
 │   ├── __init__.py              # app 包标记
 │   ├── config.py                # Pydantic Settings 配置中心，读取 .env/.env.real
+│   ├── config_models.py         # 内部配置结构，如 Agent 边界保护配置
 │   ├── config_real.py           # 真实环境配置兼容入口
 │   └── main.py                  # FastAPI 应用入口、路由注册、静态资源挂载和生命周期
 ├── mcp_servers/

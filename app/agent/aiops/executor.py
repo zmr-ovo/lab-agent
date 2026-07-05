@@ -26,6 +26,7 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
     使用 LangGraph 的 ToolNode 自动处理工具调用
     """
     logger.info("=== Executor：执行步骤 ===")
+    boundary = config.aiops_boundary
 
     plan = state.get("plan", [])
 
@@ -113,12 +114,12 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
             try:
                 tool_output = await asyncio.wait_for(
                     tool_node.ainvoke({"messages": messages}),
-                    timeout=config.aiops_tool_timeout_seconds,
+                    timeout=boundary.tool_timeout_seconds,
                 )
             except TimeoutError:
                 timeout_message = (
                     f"工具调用超时: 当前步骤的工具执行超过 "
-                    f"{config.aiops_tool_timeout_seconds:.1f} 秒"
+                    f"{boundary.tool_timeout_seconds:.1f} 秒"
                 )
                 logger.warning(timeout_message)
                 evidence.append(

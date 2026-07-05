@@ -60,10 +60,11 @@ class AIOpsService:
                 logger.info("已生成最终响应，结束流程")
                 return END
 
+            boundary = config.aiops_boundary
             past_steps = state.get("past_steps", [])
-            if len(past_steps) >= config.aiops_max_execution_steps:
+            if len(past_steps) >= boundary.max_execution_steps:
                 logger.warning(
-                    f"已达到最大执行轮数 {config.aiops_max_execution_steps}，结束流程并交由服务层兜底"
+                    f"已达到最大执行轮数 {boundary.max_execution_steps}，结束流程并交由服务层兜底"
                 )
                 return END
 
@@ -145,7 +146,7 @@ class AIOpsService:
             }
 
             try:
-                async with asyncio.timeout(config.aiops_total_timeout_seconds):
+                async with asyncio.timeout(config.aiops_boundary.total_timeout_seconds):
                     async for event in self.graph.astream(
                         input=initial_state, config=config_dict, stream_mode="updates"
                     ):
@@ -164,14 +165,30 @@ class AIOpsService:
                                 yield self._format_replanner_event(node_output)
             except TimeoutError:
                 final_values = self._read_graph_values(config_dict, initial_state)
-                fallback_report = self._build_fallback_report(
-                    final_values,
-                    reason=(
-                        f"诊断总耗时超过 {config.aiops_total_timeout_seconds:.1f} 秒，"
-                        "已停止继续执行并输出已收集信息。"
-                    ),
+                timeout_reason = (
+                    f"诊断总耗时超过 {config.aiops_boundary.total_timeout_seconds:.1f} 秒，"
+                    "已停止继续执行并输出已收集信息。"
                 )
-                logger.warning(f"[会话 {session_id}] AIOps 诊断总超时，输出兜底报告")
+                logger.warning(f"[会话 {session_id}] AIOps 诊断总超时")
+                if not config.aiops_boundary.fallback_enabled:
+                    yield {
+                        "type": "error",
+                        "stage": "timeout",
+                        "message": timeout_reason,
+                        "timeout": True,
+                    }
+                    yield {
+                        "type": "complete",
+                        "stage": "complete",
+                        "message": "任务执行超时，兜底报告已被配置关闭",
+                        "response": "",
+                        "data_mode": config.aiops_data_mode,
+                        "is_mock": config.aiops_data_mode == "mock",
+                        "timeout": True,
+                    }
+                    return
+
+                fallback_report = self._build_fallback_report(final_values, reason=timeout_reason)
                 yield {
                     "type": "report",
                     "stage": "final_report",
@@ -193,16 +210,19 @@ class AIOpsService:
             final_values = self._read_graph_values(config_dict, initial_state)
             final_response = str(final_values.get("response") or "")
             if not final_response.strip():
-                final_response = self._build_fallback_report(
-                    final_values,
-                    reason="诊断流程结束时未生成最终报告，已基于已执行步骤和证据输出兜底报告。",
-                )
-                yield {
-                    "type": "report",
-                    "stage": "final_report",
-                    "message": "最终报告缺失，已生成兜底报告",
-                    "report": final_response,
-                }
+                if config.aiops_boundary.fallback_enabled:
+                    final_response = self._build_fallback_report(
+                        final_values,
+                        reason="诊断流程结束时未生成最终报告，已基于已执行步骤和证据输出兜底报告。",
+                    )
+                    yield {
+                        "type": "report",
+                        "stage": "final_report",
+                        "message": "最终报告缺失，已生成兜底报告",
+                        "report": final_response,
+                    }
+                else:
+                    logger.warning("最终报告缺失，且 AIOps 兜底报告已被配置关闭")
 
             # 发送完成事件
             yield {
@@ -218,9 +238,13 @@ class AIOpsService:
 
         except Exception as e:
             logger.error(f"[会话 {session_id}] 任务执行失败: {e}", exc_info=True)
-            fallback_report = self._build_fallback_report(
-                initial_state,
-                reason=f"诊断流程异常中断: {str(e)}",
+            fallback_report = (
+                self._build_fallback_report(
+                    initial_state,
+                    reason=f"诊断流程异常中断: {str(e)}",
+                )
+                if config.aiops_boundary.fallback_enabled
+                else ""
             )
             yield {"type": "error", "stage": "error", "message": f"任务执行出错: {str(e)}"}
             yield {

@@ -10,6 +10,8 @@ from typing import Any, Literal
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.config_models import AIOpsBoundaryConfig, ReactBoundaryConfig
+
 # 仓库根目录下的 .env（不依赖进程当前工作目录，避免 nohup / systemd 等 cwd 不对时读不到配置）
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _ENV_FILES = (_PROJECT_ROOT / ".env", _PROJECT_ROOT / ".env.real")
@@ -78,6 +80,14 @@ class Settings(BaseSettings):
     rag_flashrank_max_length: int = 512
     """FlashRank cross-encoder 输入长度上限（token 级预算，需覆盖 query+单段 passage）。"""
     rag_model: str = "qwen-max"  # 使用快速响应模型，不带扩展思考
+    rag_total_timeout_seconds: float = 120.0
+    """ReAct RAG Agent 单次问答总超时时间。"""
+    rag_tool_timeout_seconds: float = 30.0
+    """ReAct RAG Agent 单个工具调用超时时间。"""
+    rag_fallback_answer_enabled: bool = True
+    """ReAct RAG Agent 超时、异常或空响应时是否返回兜底答案。"""
+    rag_recursion_limit: int = 12
+    """ReAct RAG Agent 单次运行的 LangGraph 递归/循环上限。"""
     rag_summary_enabled: bool = True
     """是否为 ReAct RAG Agent 启用 SummarizationMiddleware 压缩早期对话历史。"""
     rag_summary_trigger_tokens: int = 12000
@@ -121,6 +131,8 @@ class Settings(BaseSettings):
     """AIOps 诊断总超时时间，超过后输出兜底报告。"""
     aiops_tool_timeout_seconds: float = 30.0
     """Executor 中单轮工具执行超时时间。"""
+    aiops_fallback_report_enabled: bool = True
+    """AIOps 诊断超时、异常或空响应时是否输出兜底报告。"""
     aiops_replanner_max_replans: int = 2
     """Replanner 最多允许重新规划的次数，防止反复改计划。"""
     aiops_replanner_max_no_progress_rounds: int = 2
@@ -169,6 +181,31 @@ class Settings(BaseSettings):
             self.mcp_monitor_stdio_args,
         )
         return {"cls": cls_server, "monitor": monitor_server}
+
+    @property
+    def react_boundary(self) -> ReactBoundaryConfig:
+        """ReAct RAG Agent 的三层边界配置。"""
+        return ReactBoundaryConfig(
+            total_timeout_seconds=self.rag_total_timeout_seconds,
+            tool_timeout_seconds=self.rag_tool_timeout_seconds,
+            fallback_enabled=self.rag_fallback_answer_enabled,
+            recursion_limit=self.rag_recursion_limit,
+            summary_trigger_tokens=self.rag_summary_trigger_tokens,
+            summary_keep_messages=self.rag_summary_keep_messages,
+            summary_trim_tokens=self.rag_summary_trim_tokens,
+        )
+
+    @property
+    def aiops_boundary(self) -> AIOpsBoundaryConfig:
+        """Plan-Execute-RePlan AIOps Agent 的三层边界配置。"""
+        return AIOpsBoundaryConfig(
+            total_timeout_seconds=self.aiops_total_timeout_seconds,
+            tool_timeout_seconds=self.aiops_tool_timeout_seconds,
+            fallback_enabled=self.aiops_fallback_report_enabled,
+            max_execution_steps=self.aiops_max_execution_steps,
+            max_replans=self.aiops_replanner_max_replans,
+            max_no_progress_rounds=self.aiops_replanner_max_no_progress_rounds,
+        )
 
     @staticmethod
     def _mcp_server_config(transport: str, url: str, command: str, args: str) -> dict[str, Any]:
