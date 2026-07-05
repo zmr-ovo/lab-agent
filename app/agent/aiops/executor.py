@@ -3,6 +3,7 @@ Executor 节点：执行单个步骤
 基于 LangGraph 官方教程实现
 """
 
+import asyncio
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -35,6 +36,7 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
 
     # 取出第一个步骤
     task = plan[0]
+    remaining_plan = plan[1:]
     logger.info(f"当前任务: {task}")
 
     try:
@@ -108,7 +110,28 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
 
             logger.info(f"第 {round_index + 1} 轮检测到 {len(tool_calls)} 个工具调用")
             messages.append(llm_response)
-            tool_output = await tool_node.ainvoke({"messages": messages})
+            try:
+                tool_output = await asyncio.wait_for(
+                    tool_node.ainvoke({"messages": messages}),
+                    timeout=config.aiops_tool_timeout_seconds,
+                )
+            except TimeoutError:
+                timeout_message = (
+                    f"工具调用超时: 当前步骤的工具执行超过 "
+                    f"{config.aiops_tool_timeout_seconds:.1f} 秒"
+                )
+                logger.warning(timeout_message)
+                evidence.append(
+                    {
+                        "step": task,
+                        "tool": "tool_node",
+                        "tool_call_id": "",
+                        "content": timeout_message,
+                        "status": "timeout",
+                    }
+                )
+                result = timeout_message
+                break
             new_messages = tool_output.get("messages", [])
             messages.extend(new_messages)
             for tool_message in new_messages:
@@ -132,15 +155,17 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
 
         # 返回更新：移除已执行的步骤，添加执行历史
         return {
-            "plan": plan[1:],  # 移除第一个步骤
+            "plan": remaining_plan,  # 移除第一个步骤
             "past_steps": [(task, result)],  # 使用 operator.add 追加
             "evidence": evidence,
+            "no_progress_rounds": 0,
         }
 
     except Exception as e:
         logger.error(f"执行步骤失败: {e}", exc_info=True)
         return {
-            "plan": plan[1:],
+            "plan": remaining_plan,
             "past_steps": [(task, f"执行失败: {str(e)}")],
             "evidence": [],
+            "no_progress_rounds": 0,
         }

@@ -3,6 +3,7 @@
 基于 LangGraph 官方教程实现
 """
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncGenerator
@@ -59,6 +60,13 @@ class AIOpsService:
                 logger.info("已生成最终响应，结束流程")
                 return END
 
+            past_steps = state.get("past_steps", [])
+            if len(past_steps) >= config.aiops_max_execution_steps:
+                logger.warning(
+                    f"已达到最大执行轮数 {config.aiops_max_execution_steps}，结束流程并交由服务层兜底"
+                )
+                return END
+
             # 如果还有计划步骤，继续执行
             plan = state.get("plan", [])
             if plan:
@@ -99,20 +107,22 @@ class AIOpsService:
         """
         logger.info(f"[会话 {session_id}] 开始执行任务: {user_input}")
 
-        try:
-            # 初始化状态
-            initial_state: PlanExecuteState = {
-                "input": user_input,
-                "plan": [],
-                "past_steps": [],
-                "response": "",
-                "alerts": alerts or [],
-                "alert_source": alert_source,
-                "data_mode": config.aiops_data_mode,
-                "lookback_minutes": lookback_minutes,
-                "evidence": [],
-            }
+        # 初始化状态
+        initial_state: PlanExecuteState = {
+            "input": user_input,
+            "plan": [],
+            "past_steps": [],
+            "response": "",
+            "alerts": alerts or [],
+            "alert_source": alert_source,
+            "data_mode": config.aiops_data_mode,
+            "lookback_minutes": lookback_minutes,
+            "evidence": [],
+            "replan_attempts": 0,
+            "no_progress_rounds": 0,
+        }
 
+        try:
             yield {
                 "type": "status",
                 "stage": "data_source",
@@ -134,30 +144,65 @@ class AIOpsService:
                 }
             }
 
-            async for event in self.graph.astream(
-                input=initial_state, config=config_dict, stream_mode="updates"
-            ):
-                # 解析事件
-                for node_name, node_output in event.items():
-                    logger.info(f"节点 '{node_name}' 输出事件")
+            try:
+                async with asyncio.timeout(config.aiops_total_timeout_seconds):
+                    async for event in self.graph.astream(
+                        input=initial_state, config=config_dict, stream_mode="updates"
+                    ):
+                        # 解析事件
+                        for node_name, node_output in event.items():
+                            logger.info(f"节点 '{node_name}' 输出事件")
 
-                    # 根据节点类型生成不同的事件
-                    if node_name == NODE_PLANNER:
-                        yield self._format_planner_event(node_output)
+                            # 根据节点类型生成不同的事件
+                            if node_name == NODE_PLANNER:
+                                yield self._format_planner_event(node_output)
 
-                    elif node_name == NODE_EXECUTOR:
-                        yield self._format_executor_event(node_output)
+                            elif node_name == NODE_EXECUTOR:
+                                yield self._format_executor_event(node_output)
 
-                    elif node_name == NODE_REPLANNER:
-                        yield self._format_replanner_event(node_output)
+                            elif node_name == NODE_REPLANNER:
+                                yield self._format_replanner_event(node_output)
+            except TimeoutError:
+                final_values = self._read_graph_values(config_dict, initial_state)
+                fallback_report = self._build_fallback_report(
+                    final_values,
+                    reason=(
+                        f"诊断总耗时超过 {config.aiops_total_timeout_seconds:.1f} 秒，"
+                        "已停止继续执行并输出已收集信息。"
+                    ),
+                )
+                logger.warning(f"[会话 {session_id}] AIOps 诊断总超时，输出兜底报告")
+                yield {
+                    "type": "report",
+                    "stage": "final_report",
+                    "message": "诊断超时，已生成兜底报告",
+                    "report": fallback_report,
+                }
+                yield {
+                    "type": "complete",
+                    "stage": "complete",
+                    "message": "任务执行超时，已返回兜底报告",
+                    "response": fallback_report,
+                    "data_mode": config.aiops_data_mode,
+                    "is_mock": config.aiops_data_mode == "mock",
+                    "timeout": True,
+                }
+                return
 
             # 获取最终状态
-            final_state = self.graph.get_state(config_dict)
-            final_response = ""
-
-            # 安全地获取响应（处理 values 可能为 None 的情况）
-            if final_state and final_state.values:
-                final_response = final_state.values.get("response", "")
+            final_values = self._read_graph_values(config_dict, initial_state)
+            final_response = str(final_values.get("response") or "")
+            if not final_response.strip():
+                final_response = self._build_fallback_report(
+                    final_values,
+                    reason="诊断流程结束时未生成最终报告，已基于已执行步骤和证据输出兜底报告。",
+                )
+                yield {
+                    "type": "report",
+                    "stage": "final_report",
+                    "message": "最终报告缺失，已生成兜底报告",
+                    "report": final_response,
+                }
 
             # 发送完成事件
             yield {
@@ -173,7 +218,20 @@ class AIOpsService:
 
         except Exception as e:
             logger.error(f"[会话 {session_id}] 任务执行失败: {e}", exc_info=True)
+            fallback_report = self._build_fallback_report(
+                initial_state,
+                reason=f"诊断流程异常中断: {str(e)}",
+            )
             yield {"type": "error", "stage": "error", "message": f"任务执行出错: {str(e)}"}
+            yield {
+                "type": "complete",
+                "stage": "complete",
+                "message": "任务执行异常，已返回兜底报告",
+                "response": fallback_report,
+                "data_mode": config.aiops_data_mode,
+                "is_mock": config.aiops_data_mode == "mock",
+                "error": True,
+            }
 
     async def diagnose(
         self,
@@ -335,6 +393,94 @@ class AIOpsService:
                 }
             else:
                 yield event
+
+    def _read_graph_values(
+        self, config_dict: RunnableConfig, fallback: PlanExecuteState
+    ) -> dict[str, Any]:
+        """安全读取 LangGraph 最终状态。"""
+        try:
+            final_state = self.graph.get_state(config_dict)
+            if final_state and final_state.values:
+                return dict(final_state.values)
+        except Exception as exc:
+            logger.warning(f"读取 AIOps graph 状态失败，使用初始状态兜底: {exc}")
+        return dict(fallback)
+
+    def _build_fallback_report(self, state: dict[str, Any], reason: str) -> str:
+        """基于已执行步骤和证据生成兜底 Markdown 报告。"""
+        input_text = str(state.get("input") or "")
+        past_steps = list(state.get("past_steps") or [])
+        evidence = list(state.get("evidence") or [])
+        alerts = list(state.get("alerts") or [])
+        data_mode = str(state.get("data_mode") or config.aiops_data_mode)
+
+        mock_notice = (
+            "> **Mock 演示报告：以下数据为模拟数据，不代表真实生产环境。**\n\n"
+            if data_mode == "mock"
+            else ""
+        )
+
+        alert_lines = "\n".join(f"- `{json.dumps(alert, ensure_ascii=False, default=str)}`" for alert in alerts)
+        if not alert_lines:
+            alert_lines = "- 无结构化告警输入"
+
+        step_lines = self._format_fallback_steps(past_steps)
+        evidence_lines = self._format_fallback_evidence(evidence)
+
+        return (
+            f"{mock_notice}"
+            "# 告警分析报告\n\n"
+            "## 兜底说明\n"
+            f"{reason}\n\n"
+            "## 原始任务\n"
+            f"{input_text or '未提供任务描述'}\n\n"
+            "## 活跃告警上下文\n"
+            f"{alert_lines}\n\n"
+            "## 已执行步骤\n"
+            f"{step_lines}\n\n"
+            "## 已收集证据\n"
+            f"{evidence_lines}\n\n"
+            "## 结论\n"
+            "当前报告由保护边界自动生成，仅汇总已完成步骤与已收集证据。"
+            "请根据上述信息继续人工排查，或缩小时间范围后重新发起诊断。\n"
+        )
+
+    @staticmethod
+    def _format_fallback_steps(past_steps: list[Any]) -> str:
+        if not past_steps:
+            return "未完成任何执行步骤。"
+
+        lines: list[str] = []
+        for index, item in enumerate(past_steps, 1):
+            try:
+                step, result = item
+            except (TypeError, ValueError):
+                step, result = f"步骤 {index}", item
+            result_text = str(result)
+            if len(result_text) > 600:
+                result_text = result_text[:600] + "..."
+            lines.append(f"{index}. **{step}**\n\n   {result_text}")
+        return "\n\n".join(lines)
+
+    @staticmethod
+    def _format_fallback_evidence(evidence: list[Any]) -> str:
+        if not evidence:
+            return "未收集到工具证据。"
+
+        lines: list[str] = []
+        for index, item in enumerate(evidence[:10], 1):
+            if isinstance(item, dict):
+                tool = item.get("tool", "unknown")
+                status = item.get("status", "unknown")
+                content = str(item.get("content", ""))
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                lines.append(f"{index}. `{tool}` ({status}): {content}")
+            else:
+                lines.append(f"{index}. {str(item)[:500]}")
+        if len(evidence) > 10:
+            lines.append(f"... 另有 {len(evidence) - 10} 条证据未展示")
+        return "\n".join(lines)
 
     def _format_planner_event(self, state: dict | None) -> dict:
         """格式化 Planner 节点事件"""

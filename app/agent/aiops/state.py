@@ -31,3 +31,7 @@ class PlanExecuteState(TypedDict):
 
     # Executor 保存的原始工具证据，供最终报告引用
     evidence: Annotated[list[dict[str, Any]], operator.add]
+
+    # 保护边界状态：防止 replanner 反复空转
+    replan_attempts: int
+    no_progress_rounds: int

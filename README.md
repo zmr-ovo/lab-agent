@@ -95,6 +95,10 @@ RAG_TOP_K=3
 RAG_FETCH_K=20
 RAG_RERANK_ENABLED=true
 RAG_FLASHRANK_MAX_LENGTH=512
+RAG_SUMMARY_ENABLED=true
+RAG_SUMMARY_TRIGGER_TOKENS=12000
+RAG_SUMMARY_KEEP_MESSAGES=12
+RAG_SUMMARY_TRIM_TOKENS=4000
 
 MILVUS_METRIC_TYPE=COSINE
 MILVUS_HYBRID_RANKER=weighted
@@ -133,6 +137,13 @@ AIOPS_DATA_MODE=mock
 
 # 生产模式，只查询真实 CLS/TMP/Alertmanager，失败时不回退 Mock
 # AIOPS_DATA_MODE=real
+
+# 诊断保护边界
+AIOPS_MAX_EXECUTION_STEPS=8
+AIOPS_TOTAL_TIMEOUT_SECONDS=180
+AIOPS_TOOL_TIMEOUT_SECONDS=30
+AIOPS_REPLANNER_MAX_REPLANS=2
+AIOPS_REPLANNER_MAX_NO_PROGRESS_ROUNDS=2
 ```
 
 服务到 CLS Topic、CQL 和 PromQL 模板的映射在 [`aiops-resources.yml`](aiops-resources.yml) 中维护。
@@ -233,7 +244,7 @@ POST https://<public-host>/api/aiops/webhook/cls?token=<AIOPS_WEBHOOK_TOKEN>
 
 ### ReAct RAG Agent
 
-普通问答由 `app/services/rag_agent_service.py` 提供，使用 `langchain.agents.create_agent` 创建 ReAct 风格工具调用 Agent。Agent 维护会话级 `thread_id`，通过 `MemorySaver` 保存多轮上下文，并用 `SummarizationMiddleware` 压缩早期对话历史；工具列表由本地工具和 MCP 工具合并而来。
+普通问答由 `app/services/rag_agent_service.py` 提供，使用 `langchain.agents.create_agent` 创建 ReAct 风格工具调用 Agent。Agent 维护会话级 `thread_id`，通过 `MemorySaver` 保存多轮上下文，并用 `SummarizationMiddleware` 压缩早期对话历史；系统提示通过 `create_agent(system_prompt=...)` 注入，不反复写入会话消息；工具列表由本地工具和 MCP 工具合并而来。
 
 ```text
 用户问题
@@ -241,6 +252,8 @@ POST https://<public-host>/api/aiops/webhook/cls?token=<AIOPS_WEBHOOK_TOKEN>
 FastAPI /api/chat 或 /api/chat_stream
   ↓
 RagAgentService 初始化 ChatQwen、MemorySaver、SummarizationMiddleware、本地工具和 MCP 工具
+  ↓
+SummarizationMiddleware 按 RAG_SUMMARY_* 配置压缩早期消息，仅保留最近上下文
   ↓
 LLM 根据系统提示判断是否需要工具
   ├─ retrieve_knowledge：Milvus 原生 hybrid_search 宽召回 → FlashRank 重排 → 返回参考上下文
@@ -288,14 +301,18 @@ planner
 executor
   ├─ 取当前计划第 1 步
   ├─ 绑定本地工具和 MCP 工具
-  ├─ 最多 4 轮工具调用，收集日志、指标、知识库和时间证据
+  ├─ 对单轮工具调用施加 AIOPS_TOOL_TIMEOUT_SECONDS 超时
+  ├─ 最多执行 AIOPS_MAX_EXECUTION_STEPS 个步骤，收集日志、指标、知识库和时间证据
   └─ 写入 past_steps 与 evidence，移除已执行步骤
   ↓
 replanner
   ├─ 判断信息是否足够
   ├─ continue：继续执行剩余步骤
-  ├─ replan：替换剩余计划
+  ├─ replan：替换剩余计划，最多 AIOPS_REPLANNER_MAX_REPLANS 次
+  ├─ 空转保护：连续无有效计划变化达到阈值后强制收敛
   └─ respond：生成最终 Markdown 诊断报告
+  ↓
+总耗时超过 AIOPS_TOTAL_TIMEOUT_SECONDS、模型空响应或异常时输出兜底 Markdown 报告
   ↓
 SSE 输出 plan/step_complete/status/report/complete 事件
 ```
@@ -371,12 +388,16 @@ lab agent/
 │   ├── styles.css               # 主界面样式
 │   └── project-flow.html        # 项目架构和流程可视化页面
 ├── tests/
+│   ├── test_api_chat_file.py    # chat/file API endpoint 函数测试
+│   ├── test_aiops_boundaries.py # AIOps 最大步数、超时、空转保护和兜底报告测试
 │   ├── test_aiops_common.py     # AIOps 共享逻辑测试
 │   ├── test_aiops_mcp_tools.py  # MCP 工具行为测试
 │   ├── test_aiops_models.py     # AIOps Pydantic 模型测试
 │   ├── test_aiops_service.py    # Plan-Execute-RePlan 服务测试
 │   ├── test_aiops_webhook.py    # CLS webhook 与事件接口测试
-│   └── test_cls_upload.py       # CLS 日志上传脚本测试
+│   ├── test_cls_upload.py       # CLS 日志上传脚本测试
+│   ├── test_rag_agent_summary.py # ReAct Agent SummarizationMiddleware 接入测试
+│   └── test_vector_store_manager.py # Milvus 原生 hybrid_search 写入/检索测试
 ├── aiops-docs/
 │   ├── cpu_high_usage.md        # CPU 高使用率排障知识
 │   ├── memory_high_usage.md     # 内存高使用率排障知识
@@ -434,7 +455,12 @@ make type-check
 make test
 ```
 
-当前仓库已包含 AIOps 与 MCP 相关测试，也可以直接运行 `uv run python -m pytest`。
+当前仓库已包含 API、RAG Agent、Milvus hybrid search、AIOps 与 MCP 相关测试，也可以直接运行：
+
+```bash
+uv run ruff check .
+uv run python -m pytest
+```
 
 ## 常见问题
 

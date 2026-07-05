@@ -115,6 +115,16 @@ class Settings(BaseSettings):
     aiops_verify_tls: bool = True
     aiops_webhook_token: str = ""
     aiops_report_dir: str = str(_PROJECT_ROOT / "runtime" / "aiops_reports")
+    aiops_max_execution_steps: int = 8
+    """Plan-Execute-RePlan 单次诊断最多执行的 executor 步数。"""
+    aiops_total_timeout_seconds: float = 180.0
+    """AIOps 诊断总超时时间，超过后输出兜底报告。"""
+    aiops_tool_timeout_seconds: float = 30.0
+    """Executor 中单轮工具执行超时时间。"""
+    aiops_replanner_max_replans: int = 2
+    """Replanner 最多允许重新规划的次数，防止反复改计划。"""
+    aiops_replanner_max_no_progress_rounds: int = 2
+    """Replanner 连续无有效计划变化的最大轮数，超过后强制生成报告。"""
 
     # 腾讯云 CLS
     tencentcloud_secret_id: str = ""

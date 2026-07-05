@@ -111,7 +111,7 @@ class MilvusClientManager:
         """检查 collection 是否存在"""
         # pymilvus 的类型标注可能不准确，实际返回 bool
         result = utility.has_collection(self.COLLECTION_NAME)
-        return bool(result)  # type: ignore[arg-type]
+        return bool(result)
 
     def _create_collection(self) -> None:
         """创建支持 dense + BM25 sparse 混合检索的 biz collection"""

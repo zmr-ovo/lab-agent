@@ -122,7 +122,7 @@ class VectorStoreManager:
                     milvus_manager.METADATA_FIELD,
                 ],
             )
-            first_hits = next(iter(cast(Any, results)), [])
+            first_hits: Any = next(iter(cast(Any, results)), [])
             docs = self._hits_to_documents(first_hits)
             logger.debug(
                 f"Milvus 混合检索完成: query='{query}', ranker={config.milvus_hybrid_ranker}, "

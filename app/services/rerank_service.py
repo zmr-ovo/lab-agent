@@ -63,7 +63,7 @@ def rerank_documents(query: str, documents: list[Document], top_n: int) -> list[
                 try:
                     meta["_rerank_score"] = float(score)
                 except (TypeError, ValueError):
-                    meta["_rerank_score"] = score  # type: ignore[assignment]
+                    meta["_rerank_score"] = score
             out.append(Document(page_content=base.page_content, metadata=meta))
 
         if len(out) < min(top_n, len(documents)):

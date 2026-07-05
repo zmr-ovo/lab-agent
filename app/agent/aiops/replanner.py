@@ -129,15 +129,32 @@ async def replanner(state: PlanExecuteState) -> dict[str, Any]:
     input_text = state.get("input", "")
     plan = state.get("plan", [])
     past_steps = state.get("past_steps", [])
+    replan_attempts = state.get("replan_attempts", 0)
+    no_progress_rounds = state.get("no_progress_rounds", 0)
 
     logger.info(f"剩余计划步骤: {len(plan)}")
     logger.info(f"已执行步骤: {len(past_steps)}")
 
     # ⚠️ 强制限制：如果已执行步骤过多，直接生成响应
-    MAX_STEPS = 8
-    if len(past_steps) >= MAX_STEPS:
+    if len(past_steps) >= config.aiops_max_execution_steps:
         logger.warning(
-            f"已执行 {len(past_steps)} 个步骤，超过最大限制 {MAX_STEPS}，强制生成最终响应"
+            f"已执行 {len(past_steps)} 个步骤，超过最大限制 "
+            f"{config.aiops_max_execution_steps}，强制生成最终响应"
+        )
+        llm = ChatQwen(
+            model=config.rag_model,
+            api_key=SecretStr(config.dashscope_api_key),
+            temperature=0,
+        )
+        return await _generate_response(state, llm)
+
+    if (
+        replan_attempts >= config.aiops_replanner_max_replans
+        or no_progress_rounds >= config.aiops_replanner_max_no_progress_rounds
+    ):
+        logger.warning(
+            "Replanner 触发空转保护: "
+            f"replan_attempts={replan_attempts}, no_progress_rounds={no_progress_rounds}"
         )
         llm = ChatQwen(
             model=config.rag_model,
@@ -233,16 +250,28 @@ async def replanner(state: PlanExecuteState) -> dict[str, Any]:
                     return await _generate_response(state, llm)
 
                 logger.info(f"决定调整计划，新步骤数量: {len(new_steps)}")
-                if new_steps:
+                next_replan_attempts = replan_attempts + 1
+                if new_steps and new_steps != plan:
                     # 替换剩余计划
-                    return {"plan": new_steps}
+                    return {
+                        "plan": new_steps,
+                        "replan_attempts": next_replan_attempts,
+                        "no_progress_rounds": 0,
+                    }
                 else:
-                    logger.warning("replan 但未提供新步骤，继续执行原计划")
-                    return {}
+                    next_no_progress_rounds = no_progress_rounds + 1
+                    logger.warning(
+                        "replan 未提供有效新步骤，继续执行原计划: "
+                        f"no_progress_rounds={next_no_progress_rounds}"
+                    )
+                    return {
+                        "replan_attempts": next_replan_attempts,
+                        "no_progress_rounds": next_no_progress_rounds,
+                    }
 
             else:  # action == "continue"
                 logger.info("决定继续执行当前计划")
-                return {}  # 不修改状态，继续执行
+                return {"no_progress_rounds": 0}  # 不修改计划，继续执行
 
         except Exception as e:
             logger.error(f"重新规划失败: {e}, 继续执行剩余计划")
